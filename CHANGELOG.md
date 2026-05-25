@@ -2,6 +2,70 @@
 
 所有重要的变更都记在这里。版本号遵守 [SemVer](https://semver.org/lang/zh-CN/)。
 
+## [0.2.0] — 2026-05-25
+
+**自演化版本**。玄玑现在能在对话中主动补知识、写记忆、沉淀技能、提案新工具——
+但所有进化都受边界约束：知识库可写、记忆库可写、技能可写，**工具代码永远人工把关**。
+
+### Added · 自演化工具集（14 个新工具）
+
+#### 元工具（4 个，自察自管）
+- `list_tools`：列出当前可用工具（带 risk 过滤）
+- `describe_tool`：查看某工具的完整 JSONSchema 与描述
+- `list_skills` / `read_skill`：列出和读取已学到的技能
+
+#### 记忆工具（2 个，主动读写）
+- `recall_memory`：按关键词主动召回记忆，可过滤 kind / scope
+- `write_memory`：玄玑判断「这条值得记」时落库（屏蔽 working scope，importance 自动 clamp）
+
+#### 知识 ingestion（4 个，玄玑自动补充知识库）
+- `ingest_text`：直接把 markdown 文本切片入库
+- `ingest_file`：从工程内文件读入并入库
+- `upsert_symbol`：精准添加/更新 API 卡片
+- `ingest_url`：拉网页 → HTML→md → 切片入库（**RiskTag.NET，必走司辰阁 HITL**）
+
+#### 技能系统（3 个，procedural memory 薄壳）
+- `save_skill`：把做事套路保存为技能（写到 `skills` namespace + USER scope）
+- `search_skill`：按关键词搜技能
+- `run_skill`：展开技能正文 + 建议工具序列，让玄玑下一轮按步骤决策
+
+#### 工具工厂（1 个，**安全收口**）
+- `propose_tool`：玄玑产出新工具 JSON 草案到 `<data_dir>/tool_drafts/`，
+  **不自动 publish**——由小宝 review 后人工实现 Python 代码并注册
+
+### Added · 内核与 CLI
+
+- `core/knowledge/chunker.py`：markdown 切分器（按标题分节、保留代码块）
+- `core/tools/ingest_url.py`：极简 HTML→markdown（不引入 BeautifulSoup）
+- `core/config/paths.py` 新增 `tool_drafts_dir()`
+- 人设 prompt 加「自我进化」段，引导玄玑何时调用各类进化工具
+- CLI 新增子命令族：
+  - `xuanji skill list / show / save / forget`
+  - `xuanji tool list / drafts (--show)`
+
+### Quality
+
+- ruff / mypy strict 全绿
+- pytest **108 个测试全过**（M2.5 新增 23 个：evolve_tools 23）
+- 工具总数 **21 个**（5 原子 + 2 知识 + 4 元 + 2 记忆 + 4 ingest + 3 skill + 1 factory）
+
+### Design notes
+
+**为什么技能 = procedural memory 而不是新执行单元？**
+
+传统设计会引入 `Skill` 类、注册表、组合器。但仔细看 → 技能本质就是
+"做事的套路"加"建议工具序列"，这正是 procedural memory 的语义。
+统一抽象避免双轨维护，且天然吃到记忆系统的 reflux / 衰减 / 命名空间隔离。
+
+**为什么 propose_tool 不自动实现？**
+
+让 LLM 写可执行 Python 代码并自动注册到生产 registry——这是 LLM Agent 安全的
+最大风险面之一。本期采用「玄玑提案 → 落 JSON 到磁盘 → 小宝 review → 人工实现」
+四步流水线。M4+ 的 ToolFactory 即便接 LLM 生成实现，也走 draft → 单测 → review →
+published 严格流程，玄玑永远不能自己 publish。
+
+---
+
 ## [0.1.0] — 2026-05-25
 
 第一个对外可用版本。M0 + M1 + M2 三个里程碑闭环，CLI 端到端跑通"小宝问 → 玄玑用工具 → 司辰阁守门 → 工具执行 → 怀玉阁回流"完整链路。

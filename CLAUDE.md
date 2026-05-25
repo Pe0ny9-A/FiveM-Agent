@@ -90,23 +90,31 @@ uv run xuanji config use <name>  # 切换 profile
 uv run xuanji chat             # 进入对话
 ```
 
-## 当前进度（截至 0.1.0）
+## 当前进度（截至 0.2.0）
 
-- [x] M0 骨架：项目结构、uv、ruff、mypy strict、pytest
-- [x] LLM 抽象层：`Message` / `ContentBlock` / `Delta` / `LLMProvider` / `ToolResultBlock`
-- [x] AnthropicProvider：流式对话归一化（文本/工具/思维链 + tool_result）
-- [x] OpenAIProvider：兼顾 OpenAI / DeepSeek / openai-compatible
-- [x] 玄玑人设：5 模式 × 3 温度 + 双向可调称呼
-- [x] ConfigStore：跨平台 JSON 配置 + 4 种 profile kind
-- [x] 天枢台 Conductor：会话上下文 + 多轮 tool loop + reflux 注入 + audit
-- [x] 百工坊 Tool/Registry + 工造司 InProcSandbox
-- [x] 司辰阁 GateInterceptor + DefaultPolicy + HITLBridge（CLI 实现 ConsoleHITL）
-- [x] 5 个原子工具 + 2 个知识工具
-- [x] 稷下学宫 SQLite FTS5 + SkillGraph + 种子库（QBCore/ox_lib/ox_inventory/cfx）
-- [x] 怀玉阁 SQLite + 三层 scope + 三类 kind + 衰减打分 + Reflux
-- [x] CLI：`info` / `chat` / `config (×7)` / `knowledge (×6)` / `memory (×6)`
-- [x] 质量门：ruff/mypy strict/pytest 三件套全绿，**82 单测**
-- [ ] 群英会、桌面端、Web 端、向量检索、爬虫（M3+）
+- [x] M0 骨架 + 三家 LLM Provider + 配置系统 + 玄玑人设
+- [x] 天枢台 Conductor：会话上下文 + 多轮 tool loop + reflux + audit
+- [x] 百工坊 + 工造司 InProcSandbox + 司辰阁 GateInterceptor + HITL
+- [x] 稷下学宫 SQLite FTS5 + SkillGraph + 5 套种子（含 NPC AI 模板）
+- [x] 怀玉阁 SQLite + 三层 scope × 三类 kind + 衰减 Reflux
+- [x] **0.2.0 自演化能力**：21 个工具
+  - 元工具：`list_tools` / `describe_tool` / `list_skills` / `read_skill`
+  - 记忆：`recall_memory` / `write_memory`
+  - 知识 ingestion：`ingest_text` / `ingest_file` / `upsert_symbol` / `ingest_url`(NET)
+  - 技能：`save_skill` / `search_skill` / `run_skill`
+  - 工厂：`propose_tool`（仅产 JSON 草案到 `<data_dir>/tool_drafts/`）
+- [x] CLI：`info` / `chat` / `config` / `knowledge` / `memory` / `skill` / `tool`
+- [x] 质量门：ruff/mypy strict/pytest 三件套全绿，**108 单测**
+- [ ] 群英会、桌面端、Web 端、向量检索、爬虫、ToolFactory 自动实现链路（M3+）
+
+### 0.2.0 关键设计
+
+**技能 = procedural memory**：不引入新执行单元，技能本质是「做事套路 + 工具引用」，
+直接复用 `MemoryStore`，吃到 reflux / 衰减 / 命名空间隔离。
+
+**安全收口**：玄玑能写知识、写记忆、写技能，**不能写可执行代码**。
+`propose_tool` 仅产 JSON 草案到磁盘，由小宝 review 后人工实现并注册到 ToolRegistry。
+这是 LLM Agent 的最大风险面收口。
 
 ## 给姐姐的提示
 

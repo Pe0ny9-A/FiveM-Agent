@@ -13,6 +13,7 @@ from core.config.paths import (
     data_dir,
     knowledge_db_path,
     memory_db_path,
+    tool_drafts_dir,
 )
 from core.config.profiles import (
     AnthropicProfile,
@@ -38,4 +39,5 @@ __all__ = [
     "data_dir",
     "knowledge_db_path",
     "memory_db_path",
+    "tool_drafts_dir",
 ]

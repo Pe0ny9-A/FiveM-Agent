@@ -50,3 +50,10 @@ def knowledge_db_path() -> Path:
 def memory_db_path() -> Path:
     """返回记忆库 SQLite 文件路径。"""
     return data_dir() / _MEMORY_DB
+
+
+def tool_drafts_dir() -> Path:
+    """返回 propose_tool 草案的存放目录。"""
+    p = data_dir() / "tool_drafts"
+    p.mkdir(parents=True, exist_ok=True)
+    return p

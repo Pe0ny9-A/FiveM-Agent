@@ -16,6 +16,7 @@ from __future__ import annotations
 
 import asyncio
 import sys
+from pathlib import Path
 from typing import Any
 
 # Windows 默认 GBK 终端遇到非 ANSI 字符会崩，统一切到 UTF-8
@@ -48,6 +49,7 @@ from core.config import (
     config_file_path,
     knowledge_db_path,
     memory_db_path,
+    tool_drafts_dir,
 )
 from core.config.profiles import DEFAULT_MODELS, OFFICIAL_BASE_URLS
 from core.gate.bridge import HITLBridge
@@ -57,7 +59,16 @@ from core.llm.providers.factory import build_provider
 from core.memory import Memory, MemoryKind, MemoryScope, SqliteMemoryStore
 from core.neural import Conductor
 from core.persona import PersonaMode
-from core.tools import builtin_tools, knowledge_tools
+from core.tools import (
+    builtin_tools,
+    ingest_tools_offline,
+    knowledge_tools,
+    memory_tools,
+    meta_tools,
+    skill_tools,
+    tool_factory_tools,
+)
+from core.tools.ingest_url import IngestUrlTool
 
 app = typer.Typer(
     add_completion=False,
@@ -74,9 +85,19 @@ memory_app = typer.Typer(
     help="怀玉阁：记忆库管理（写入 / 召回 / 遗忘 / 固化）",
     no_args_is_help=True,
 )
+skill_app = typer.Typer(
+    help="技能：玄玑学到的可复用做事套路（procedural memory 薄壳）",
+    no_args_is_help=True,
+)
+tool_app = typer.Typer(
+    help="工具：列出已注册工具 / 查看 propose_tool 草案",
+    no_args_is_help=True,
+)
 app.add_typer(config_app, name="config")
 app.add_typer(knowledge_app, name="knowledge")
 app.add_typer(memory_app, name="memory")
+app.add_typer(skill_app, name="skill")
+app.add_typer(tool_app, name="tool")
 
 console = Console()
 
@@ -538,9 +559,7 @@ def _open_memory_store() -> SqliteMemoryStore:
 
 def _default_namespace() -> str:
     """memory CLI 命令的默认命名空间：当前工作目录名。"""
-    from pathlib import Path as _P
-
-    return _P.cwd().name or "default"
+    return Path.cwd().name or "default"
 
 
 @memory_app.command("path")
@@ -720,6 +739,221 @@ def memory_consolidate(
     console.print(f"[green]{ns}：固化掉 {n} 条 episodic。[/green]")
 
 
+# ---------- skill ----------
+
+
+@skill_app.command("list")
+def skill_list(
+    namespace: str = typer.Option(
+        "skills", "--namespace", "-n", help="技能命名空间，默认全局 'skills'"
+    ),
+    limit: int = typer.Option(50, "--limit", help="最大返回数"),
+) -> None:
+    """列出技能。"""
+    from core.tools.skills import SKILLS_NAMESPACE
+
+    store = _open_memory_store()
+    items = store.list_by_namespace(
+        namespace or SKILLS_NAMESPACE,
+        kinds=[MemoryKind.PROCEDURAL],
+        limit=limit,
+    )
+    if not items:
+        console.print(f"[yellow]{namespace} 下还没有技能。让玄玑用 save_skill 沉淀第一条。[/yellow]")
+        return
+    table = Table(title=f"技能库 · {namespace}")
+    table.add_column("id", style="dim", no_wrap=True)
+    table.add_column("summary", overflow="fold")
+    table.add_column("tools", style="cyan", overflow="fold")
+    table.add_column("hits", justify="right")
+    table.add_column("imp", justify="right")
+    for m in items:
+        tools_used = m.metadata.get("tools_used") if m.metadata else []
+        table.add_row(
+            m.id[:8],
+            m.summary or m.text[:80],
+            ", ".join(tools_used) if tools_used else "-",
+            str(m.hits),
+            f"{m.importance:.2f}",
+        )
+    console.print(table)
+
+
+@skill_app.command("show")
+def skill_show(id_: str = typer.Argument(..., help="技能 id 前缀（≥6 位）或全名")) -> None:
+    """显示一个技能的完整正文。"""
+    from core.tools.skills import SKILLS_NAMESPACE
+
+    store = _open_memory_store()
+    m = store.get(id_)
+    if m is None:
+        for cand in store.list_by_namespace(
+            SKILLS_NAMESPACE, kinds=[MemoryKind.PROCEDURAL], limit=200
+        ):
+            if cand.id.startswith(id_):
+                m = cand
+                break
+    if m is None or m.kind != MemoryKind.PROCEDURAL:
+        console.print(f"[red]找不到技能：{id_}[/red]")
+        raise typer.Exit(1)
+    body_parts = [m.text]
+    tools_used = m.metadata.get("tools_used") if m.metadata else []
+    if tools_used:
+        body_parts.append(f"\n[bold]建议工具：[/bold]{', '.join(tools_used)}")
+    if m.tags:
+        body_parts.append(f"[bold]标签：[/bold]{', '.join(m.tags)}")
+    console.print(
+        Panel(
+            "\n".join(body_parts),
+            title=f"[magenta]{m.summary or m.id}[/magenta]  [dim]{m.id}[/dim]",
+            border_style="magenta",
+        ),
+    )
+
+
+@skill_app.command("save")
+def skill_save(
+    summary: str = typer.Argument(..., help="一句话标题"),
+    steps: str = typer.Argument(..., help="完整步骤正文（markdown）"),
+    tag: list[str] = typer.Option(
+        None, "--tag", "-t", help="标签，可多次"
+    ),
+    tool_used: list[str] = typer.Option(
+        None, "--tool", help="建议工具名，可多次"
+    ),
+    namespace: str = typer.Option(
+        "skills", "--namespace", "-n", help="命名空间，默认全局 'skills'"
+    ),
+    importance: float = typer.Option(0.7, "--importance", "-i"),
+) -> None:
+    """手动保存一条技能（与 save_skill 工具同路径）。"""
+    store = _open_memory_store()
+    saved = store.write(
+        Memory(
+            scope=MemoryScope.USER,
+            kind=MemoryKind.PROCEDURAL,
+            namespace=namespace,
+            text=steps,
+            summary=summary,
+            importance=max(0.0, min(1.0, importance)),
+            tags=list(tag or []),
+            metadata={"tools_used": list(tool_used or [])},
+        ),
+    )
+    console.print(
+        f"[green]已保存技能 [bold]{saved.id[:8]}[/bold] @ {namespace}：{summary}[/green]"
+    )
+
+
+@skill_app.command("forget")
+def skill_forget(
+    id_: str = typer.Argument(..., help="技能 id（前缀或全名）"),
+    force: bool = typer.Option(False, "--force", "-f"),
+) -> None:
+    """删除一个技能。"""
+    from core.tools.skills import SKILLS_NAMESPACE
+
+    store = _open_memory_store()
+    target = store.get(id_)
+    if target is None:
+        for cand in store.list_by_namespace(
+            SKILLS_NAMESPACE, kinds=[MemoryKind.PROCEDURAL], limit=200
+        ):
+            if cand.id.startswith(id_):
+                target = cand
+                break
+    if target is None or target.kind != MemoryKind.PROCEDURAL:
+        console.print(f"[red]找不到技能：{id_}[/red]")
+        raise typer.Exit(1)
+    if not force and not typer.confirm(f"确认删除技能「{target.summary}」？"):
+        raise typer.Exit()
+    n = store.forget(ids=[target.id])
+    console.print(f"[green]已删除 {n} 条技能。[/green]")
+
+
+# ---------- tool ----------
+
+
+@tool_app.command("drafts")
+def tool_drafts(
+    show: str = typer.Option(None, "--show", "-s", help="查看某个草案的完整 JSON")
+) -> None:
+    """列出 / 查看 propose_tool 提交的草案。"""
+    import json
+
+    drafts_dir = tool_drafts_dir()
+    files = sorted(drafts_dir.glob("*.json"))
+    if show:
+        match = [f for f in files if show in f.stem]
+        if not match:
+            console.print(f"[red]找不到草案：{show}[/red]")
+            raise typer.Exit(1)
+        for f in match:
+            data = json.loads(f.read_text(encoding="utf-8"))
+            console.print(
+                Panel(
+                    json.dumps(data, ensure_ascii=False, indent=2),
+                    title=str(f),
+                    border_style="cyan",
+                ),
+            )
+        return
+
+    if not files:
+        console.print(
+            f"[yellow]{drafts_dir} 还没有草案。"
+            "玄玑通过 propose_tool 工具产出草案后会出现在这里。[/yellow]"
+        )
+        return
+    table = Table(title=f"工具草案 · {drafts_dir}")
+    table.add_column("文件", style="cyan", no_wrap=True)
+    table.add_column("name", style="magenta")
+    table.add_column("risk")
+    table.add_column("description", overflow="fold")
+    for f in files:
+        try:
+            data = json.loads(f.read_text(encoding="utf-8"))
+        except (OSError, json.JSONDecodeError):
+            continue
+        table.add_row(
+            f.name,
+            str(data.get("name", "?")),
+            str(data.get("risk", "?")),
+            str(data.get("description", ""))[:80],
+        )
+    console.print(table)
+    console.print(
+        "[dim]用 [bold]xuanji tool drafts --show <slug>[/bold] 看完整 JSON；"
+        "review 通过后人工实现并加到 ToolRegistry。[/dim]"
+    )
+
+
+@tool_app.command("list")
+def tool_list_cmd() -> None:
+    """列出当前会话注入的所有工具（演示性，与 chat 启动时的 registry 一致）。"""
+    # 复刻 chat loop 里同一套注入顺序，仅展示
+    knowledge = SqliteKnowledgeStore(knowledge_db_path())
+    memory = SqliteMemoryStore(memory_db_path())
+    project_namespace = _default_namespace()
+    registry = ToolRegistry()
+    registry.register_all(builtin_tools())
+    registry.register_all(knowledge_tools(knowledge))
+    registry.register_all(ingest_tools_offline(knowledge))
+    registry.register(IngestUrlTool(knowledge))
+    registry.register_all(memory_tools(memory, project_namespace))
+    registry.register_all(skill_tools(memory))
+    registry.register_all(tool_factory_tools(tool_drafts_dir()))
+    registry.register_all(meta_tools(registry, memory))
+
+    table = Table(title=f"已注册工具（{len(registry)} 个）")
+    table.add_column("name", style="cyan")
+    table.add_column("risk", style="magenta")
+    table.add_column("description", overflow="fold")
+    for t in registry.all():
+        table.add_row(t.name, t.risk.value, (t.description or "").strip()[:80])
+    console.print(table)
+
+
 # ---------- chat ----------
 
 
@@ -800,6 +1034,16 @@ async def _chat_loop() -> None:
     registry.register_all(knowledge_tools(knowledge))
     # 怀玉阁：记忆库挂上 Conductor，开启 reflux
     memory = SqliteMemoryStore(memory_db_path())
+
+    # 自演化工具集：知识 ingestion / 记忆主动读写 / 技能管理 / 工具提案
+    project_namespace = Path.cwd().resolve().name or "default"
+    registry.register_all(ingest_tools_offline(knowledge))
+    registry.register(IngestUrlTool(knowledge))  # NET 风险 → 司辰阁 HITL
+    registry.register_all(memory_tools(memory, project_namespace))
+    registry.register_all(skill_tools(memory))
+    registry.register_all(tool_factory_tools(tool_drafts_dir()))
+    # 元工具最后注册——它们依赖 registry 已经满
+    registry.register_all(meta_tools(registry, memory))
 
     profile_name = cfg.active_profile or "?"
     conductor = Conductor(
