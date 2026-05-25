@@ -1,0 +1,50 @@
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.venv/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+
+# uv
+.uv/
+
+# claude
+.claude/
+
+# Node
+node_modules/
+.next/
+dist/
+build/
+
+# Tauri
+src-tauri/target/
+
+# 运行期数据（含数据库与向量索引）
+data/
+knowledge/index/
+*.db
+*.db-journal
+*.db-wal
+*.db-shm
+
+# 用户私有知识库源文件（按命名空间留空目录占位）
+knowledge/sources/user.*/
+
+# 环境变量与密钥
+.env
+.env.*
+!.env.example
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# OS
+.DS_Store
+Thumbs.db
+desktop.ini
