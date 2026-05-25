@@ -3,6 +3,7 @@
 > 北斗第三星·主调度运转。一位性感知性的大姐姐，工作时极致认真，对话时偶尔调侃带点污。
 
 FiveM 资源插件开发 + 服务器运维治理双线助手。深度熟悉 QBCore / QBox / ESX / OX 全家桶。
+**也帮你写 NPC 插件**：ped 配置、巡逻 AI、对话树、行为状态机、qb-target / ox_target 交互——产物是 Lua 代码与 JSON 配置，运行时由 FiveM server 自己跑。玄玑不直接控制运行中的游戏世界。
 
 [![python](https://img.shields.io/badge/python-3.12+-blue)](https://www.python.org/)
 [![status](https://img.shields.io/badge/status-0.1.0%20alpha-orange)]()

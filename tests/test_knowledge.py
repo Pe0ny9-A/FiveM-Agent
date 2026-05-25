@@ -153,6 +153,37 @@ def test_seeds_load_and_searchable(store: SqliteKnowledgeStore) -> None:
     assert syms[0].side == "server"
 
 
+def test_seeds_include_npc_ai(store: SqliteKnowledgeStore) -> None:
+    """种子库必须覆盖 NPC 插件开发常用 API 与模板。"""
+    for s in seed_sources():
+        store.upsert_source(s)
+    store.upsert_symbols(seed_symbols())
+    store.upsert_chunks(seed_chunks())
+
+    # native：CreatePed / TaskWanderStandard / SetBlockingOfNonTemporaryEvents
+    for native_name in ("CreatePed", "TaskWanderStandard", "SetBlockingOfNonTemporaryEvents"):
+        syms = store.lookup_symbol(native_name)
+        assert syms, f"种子库缺 {native_name}"
+
+    # 模板：spawn_static_npc / patrol_route / dialogue_tree / behavior_state_machine
+    for tpl in (
+        "pattern.spawn_static_npc",
+        "pattern.patrol_route",
+        "pattern.dialogue_tree",
+        "pattern.behavior_state_machine",
+    ):
+        syms = store.lookup_symbol(tpl)
+        assert syms, f"种子库缺模板 {tpl}"
+
+    # 概念性 chunk：搜"巡逻 NPC"应命中
+    hits = store.search("巡逻 NPC")
+    assert hits, "找不到 NPC 巡逻相关 chunk"
+
+    # 命名空间被收录
+    namespaces = store.list_namespaces()
+    assert "fivem.npc_ai@1.x" in namespaces
+
+
 # ---------------- 工具适配 ----------------
 
 

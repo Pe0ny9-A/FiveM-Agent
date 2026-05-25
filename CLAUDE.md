@@ -13,9 +13,10 @@
 
 为 FiveM 服务器主程提供"开发 + 运维"双轮驱动的智能体：
 - **资源插件开发**：QBCore / QBox / ESX / OX 全家桶（ox_lib / ox_inventory / ox_target / ox_doorlock / oxmysql）
+- **NPC 插件开发**：帮小宝写 NPC 资源里的巡逻 AI、对话树、行为状态机、qb-target / ox_target 交互、ped 配置等模块（产物是 Lua 代码与 JSON 配置，运行时由 FiveM 自己跑）
 - **服务器运维治理**：resource 管理、配置审阅、日志分析、自动化运维
 
-**不做**：游戏内 NPC 行为驱动、玩家行为分析、反作弊检测。
+**不做**：玄玑不直接控制运行中的游戏世界——不监听 game tick、不实时驱动 NPC 决策、不做反作弊检测。玄玑产出的是开发期的代码与配置，部署后由 FiveM server 自己执行。
 
 完整规划见 `C:\Users\Administrator\.claude\plans\fivem-ai-agent-glowing-cake.md`。
 

@@ -25,6 +25,19 @@ def test_guardrails_cover_high_risk() -> None:
     assert "脱敏" in XUANJI_GUARDRAILS
 
 
+def test_persona_includes_npc_plugin_dev() -> None:
+    """专精领域应明确写"NPC 插件开发"——这是 FiveM 资源开发的主流活儿。"""
+    assert "NPC 插件" in XUANJI_CORE_PROMPT
+
+
+def test_guardrails_excludes_runtime_npc_control_only() -> None:
+    """边界应只排除 runtime 直接控制游戏，不应一刀切排除 NPC 插件开发。"""
+    # 应明确说"不直接控制运行中的游戏世界"
+    assert ("不直接控制" in XUANJI_GUARDRAILS) or ("runtime" in XUANJI_GUARDRAILS.lower())
+    # 不应再有"游戏内 NPC 行为驱动"这种把 NPC 整体拒之门外的措辞
+    assert "游戏内 NPC 行为驱动" not in XUANJI_GUARDRAILS
+
+
 def test_build_default() -> None:
     """默认 chat + balanced 应包含核心 prompt 与守护规则。"""
     sp = build_system_prompt()
