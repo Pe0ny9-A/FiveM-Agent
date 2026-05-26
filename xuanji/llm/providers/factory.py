@@ -2,6 +2,11 @@
 
 base_url 统一从 core.config.profiles.OFFICIAL_BASE_URLS 读取，
 确保配置展示与实际调用使用同一个值。
+
+三家分立：
+- AnthropicProfile → AnthropicProvider（Extended Thinking / Prompt Cache）
+- OpenAIProfile / OpenAICompatibleProfile → OpenAIProvider（reasoning 模型 / prefix cache）
+- DeepSeekProfile → DeepSeekProvider（reasoning_content 往返 / prompt cache hit/miss）
 """
 
 from __future__ import annotations
@@ -17,6 +22,7 @@ from xuanji.config.profiles import (
 )
 from xuanji.llm.providers.anthropic import AnthropicProvider
 from xuanji.llm.providers.base import LLMProvider
+from xuanji.llm.providers.deepseek import DeepSeekProvider
 from xuanji.llm.providers.openai import OpenAIProvider
 
 
@@ -36,10 +42,9 @@ def build_provider(profile: Profile) -> LLMProvider:
         )
 
     if isinstance(profile, DeepSeekProfile):
-        return OpenAIProvider(
+        return DeepSeekProvider(
             api_key=profile.api_key,
             base_url=OFFICIAL_BASE_URLS[ProfileKind.DEEPSEEK],
-            provider_name=ProfileKind.DEEPSEEK.value,
         )
 
     if isinstance(profile, OpenAICompatibleProfile):

@@ -3,6 +3,14 @@
 将 Anthropic SDK 的事件流（content_block_start / content_block_delta /
 content_block_stop / message_delta / message_stop）归一化为 core.llm 的
 Delta 事件流。文本/工具/思维链三种块都覆盖。
+
+Anthropic 独门特性（一等公民）：
+- **Extended Thinking**：传 `thinking_budget=N` 即等价于
+  `thinking={"type": "enabled", "budget_tokens": N}`。Claude 4 系列默认
+  budget=4096 即可显著提升复杂推理能力。
+- **Prompt cache**：传 `cache_system=True` 让 system prompt 自动加
+  `cache_control={"type": "ephemeral"}`，最大化重用。
+- **stop_sequences / metadata** 等其他参数走 `**extra` 透传。
 """
 
 from __future__ import annotations
@@ -145,6 +153,50 @@ def _from_anthropic_message(msg: anth.Message) -> AssistantMessage:
     )
 
 
+def _build_kwargs(
+    model: str,
+    messages: Sequence[Message],
+    system: str | None,
+    max_tokens: int,
+    temperature: float,
+    tools: Sequence[dict[str, Any]] | None,
+    extra: dict[str, Any],
+) -> dict[str, Any]:
+    """统一构造 Anthropic 入参，把 thinking_budget / cache_system 翻译成 SDK 字段。"""
+    kwargs: dict[str, Any] = {
+        "model": model,
+        "messages": _to_anthropic_messages(messages),
+        "max_tokens": max_tokens,
+        "temperature": temperature,
+    }
+
+    # cache_system=True 把 system 包成 cache 块
+    cache_system = extra.pop("cache_system", False)
+    if system is not None:
+        if cache_system:
+            kwargs["system"] = [
+                {
+                    "type": "text",
+                    "text": system,
+                    "cache_control": {"type": "ephemeral"},
+                },
+            ]
+        else:
+            kwargs["system"] = system
+
+    # thinking_budget=N 自动展开
+    thinking_budget = extra.pop("thinking_budget", None)
+    if thinking_budget is not None and "thinking" not in extra:
+        kwargs["thinking"] = {"type": "enabled", "budget_tokens": int(thinking_budget)}
+        # extended thinking 要求 temperature=1
+        kwargs["temperature"] = 1.0
+
+    if tools:
+        kwargs["tools"] = list(tools)
+    kwargs.update(extra)
+    return kwargs
+
+
 class AnthropicProvider(LLMProvider):
     """Anthropic Claude Provider。"""
 
@@ -170,17 +222,7 @@ class AnthropicProvider(LLMProvider):
         tools: Sequence[dict[str, Any]] | None = None,
         **extra: Any,
     ) -> AssistantMessage:
-        kwargs: dict[str, Any] = {
-            "model": model,
-            "messages": _to_anthropic_messages(messages),
-            "max_tokens": max_tokens,
-            "temperature": temperature,
-        }
-        if system is not None:
-            kwargs["system"] = system
-        if tools:
-            kwargs["tools"] = list(tools)
-        kwargs.update(extra)
+        kwargs = _build_kwargs(model, messages, system, max_tokens, temperature, tools, extra)
         msg = await self._client.messages.create(**kwargs)
         return _from_anthropic_message(msg)
 
@@ -195,17 +237,7 @@ class AnthropicProvider(LLMProvider):
         tools: Sequence[dict[str, Any]] | None = None,
         **extra: Any,
     ) -> AsyncIterator[Delta]:
-        kwargs: dict[str, Any] = {
-            "model": model,
-            "messages": _to_anthropic_messages(messages),
-            "max_tokens": max_tokens,
-            "temperature": temperature,
-        }
-        if system is not None:
-            kwargs["system"] = system
-        if tools:
-            kwargs["tools"] = list(tools)
-        kwargs.update(extra)
+        kwargs = _build_kwargs(model, messages, system, max_tokens, temperature, tools, extra)
 
         # 块索引 → 累积的 args JSON 字符串（仅 tool_use 块用）
         tool_args_buf: dict[int, str] = {}

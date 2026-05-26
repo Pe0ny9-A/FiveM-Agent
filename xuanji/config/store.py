@@ -18,6 +18,7 @@ from pydantic import BaseModel, Field
 from xuanji.config.paths import config_file_path
 from xuanji.config.profiles import Profile
 from xuanji.mcp.registry import McpServerConfig
+from xuanji.neural.compaction import CompactionConfig
 from xuanji.persona.modes import PersonaTemperature
 
 
@@ -37,6 +38,10 @@ class XuanjiConfig(BaseModel):
     mcp_servers: list[McpServerConfig] = Field(
         default_factory=list,
         description="收编的 MCP server 列表。启动时 ServerRuntime 会拉起 enabled 的",
+    )
+    compaction: CompactionConfig = Field(
+        default_factory=CompactionConfig,
+        description="上下文自动压缩。超 max_context_tokens 时折叠 history 头部",
     )
 
     def get_active(self) -> Profile | None:

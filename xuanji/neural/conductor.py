@@ -43,6 +43,7 @@ from xuanji.llm.providers.base import (
     LLMProvider,
     Message,
     TextBlock,
+    ThinkingBlock,
     ToolCallBlock,
     ToolResultBlock,
 )
@@ -50,6 +51,7 @@ from xuanji.llm.providers.factory import build_provider
 from xuanji.memory.reflux import refluxed_fragment
 from xuanji.memory.store.base import MemoryStore
 from xuanji.neural.audit import AuditEvent, AuditLog
+from xuanji.neural.compaction import CompactionConfig, compact_history
 from xuanji.persona.modes import (
     DEFAULT_ASSISTANT_ALIAS,
     DEFAULT_USER_ALIAS,
@@ -140,6 +142,7 @@ class Conductor:
         max_tool_iterations: int = 10,
         static_extra: str | None = None,
         hooks: HooksRegistry | None = None,
+        compaction: CompactionConfig | None = None,
     ) -> None:
         provider = build_provider(profile)
         self.ctx = SessionCtx(
@@ -172,6 +175,8 @@ class Conductor:
         self.static_extra = static_extra
         # Hooks：可选，None 时全程绕过 hook 路径
         self.hooks = hooks
+        # 自动上下文压缩：默认开启，超 max_context_tokens 折叠头部
+        self.compaction = compaction or CompactionConfig()
 
         self.audit.emit(
             AuditEvent(
@@ -239,6 +244,22 @@ class Conductor:
             )
 
         for iteration in range(self.max_tool_iterations):
+            # 压缩上下文：超过阈值时折叠 history 头部
+            new_history, savings = compact_history(self.ctx.history, self.compaction)
+            if savings > 0:
+                self.ctx.history = new_history
+                self.audit.emit(
+                    AuditEvent(
+                        trace_id=trace_id,
+                        type="context_compacted",
+                        payload={
+                            "saved_tokens": savings,
+                            "history_len": len(new_history),
+                            "max_context_tokens": self.compaction.max_context_tokens,
+                        },
+                    ),
+                )
+
             self.audit.emit(
                 AuditEvent(
                     trace_id=trace_id,
@@ -253,7 +274,15 @@ class Conductor:
             )
 
             text_buf = ""
+            thinking_buf = ""
             tool_calls: dict[int, dict[str, Any]] = {}  # index → {id, name, args}
+
+            # 模型支持 prompt cache 时自动给 system 加缓存（Anthropic 走 cache_system，
+            # OpenAI / DeepSeek 是自动 prefix cache 不需要参数）
+            stream_extra: dict[str, Any] = {}
+            caps = self.ctx.provider.capabilities(self.ctx.model)
+            if caps.supports_prompt_cache and self.ctx.provider.name == "anthropic":
+                stream_extra["cache_system"] = True
 
             try:
                 async for delta in self.ctx.provider.stream(
@@ -261,6 +290,7 @@ class Conductor:
                     messages=self.ctx.history,
                     system=_system_prompt(),
                     tools=tool_schemas,
+                    **stream_extra,
                 ):
                     if delta.type == "text_delta" and delta.text:
                         text_buf += delta.text
@@ -271,6 +301,8 @@ class Conductor:
                                 payload={"chunk": delta.text},
                             ),
                         )
+                    elif delta.type == "thinking_delta" and delta.text:
+                        thinking_buf += delta.text
                     elif delta.type == "tool_call_start":
                         tool_calls[delta.index] = {
                             "id": delta.tool_call_id or "",
@@ -317,7 +349,11 @@ class Conductor:
                 raise
 
             # 把 assistant 这一轮的产出落入 history
-            asst_blocks: list[TextBlock | ToolCallBlock] = []
+            asst_blocks: list[TextBlock | ThinkingBlock | ToolCallBlock] = []
+            # ThinkingBlock 必须放在最前——DeepSeek thinking 模式要求 reasoning_content
+            # 与 content 同一条 assistant 消息回传；位置靠前不影响 Anthropic 行为
+            if thinking_buf:
+                asst_blocks.append(ThinkingBlock(text=thinking_buf))
             if text_buf:
                 asst_blocks.append(TextBlock(text=text_buf))
             for tc in tool_calls.values():

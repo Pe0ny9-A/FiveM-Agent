@@ -1,17 +1,19 @@
-"""OpenAI Provider 实现。
+"""DeepSeek Provider 实现。
 
-仅服务 OpenAI 官方与 openai-compatible 端点（OneAPI / Ollama / Kimi /
-智谱 / 火山方舟……）。**DeepSeek 已拆走到 [deepseek.py](deepseek.py)**——
-它有 reasoning_content 往返、prompt cache 计量等独门约束，硬塞进通用层会污染
-其他 OpenAI 兼容端点。
+DeepSeek 用 OpenAI Chat Completions 协议，但有三个独门特性必须单独适配，
+不能像 0.9 之前那样共用 OpenAIProvider：
 
-OpenAI 这一侧关注点：
-- reasoning 模型（o1 / o3 / gpt-5 系列）走 max_completion_tokens 而不是
-  max_tokens，并支持 reasoning_effort=low/medium/high；本 Provider 对
-  这两个参数透传 + 自动迁移
-- parallel_tool_calls 对 reasoning 模型默认 false，对其他模型默认 true，
-  调用方可显式覆盖
-- prompt prefix cache（自动）：usage 里有 prompt_tokens_details.cached_tokens
+1. **thinking 模式必须往返 reasoning_content**：v4-pro / v4-flash / reasoner
+   响应里 message.reasoning_content 是独立字段，下一轮回传时也必须把它原样
+   写回 assistant message 的 reasoning_content 字段，否则 API 会返回
+   `BadRequestError 400 — The reasoning_content in the thinking mode must
+   be passed back to the API`。
+2. **prompt cache 计量**：usage 里有 prompt_cache_hit_tokens /
+   prompt_cache_miss_tokens，对应 Usage.cache_read_tokens（命中部分实际
+   只按 0.1 倍计费）。
+3. **流式 reasoning_content 单独成段**：delta.reasoning_content 与
+   delta.content 是两条独立流，前者在前后者在后，归一化为 thinking_*
+   事件。
 """
 
 from __future__ import annotations
@@ -30,97 +32,65 @@ from xuanji.llm.providers.base import (
     Message,
     ModelCapabilities,
     TextBlock,
+    ThinkingBlock,
     ToolCallBlock,
     ToolResultBlock,
     Usage,
 )
 
-# 默认能力指纹。未登记的模型按这里兜底，保留 cn_quality=high 便于中文场景默认通过。
-_DEFAULT_CAPS = ModelCapabilities(
-    name="generic",
-    provider="openai",
-    context_window=128_000,
-    max_output_tokens=4096,
-    supports_thinking=False,
-    supports_prompt_cache=True,  # OpenAI 自动 prefix cache，无需 opt-in
-    cn_quality="high",
-)
-
 _KNOWN_CAPS: dict[str, ModelCapabilities] = {
-    # GPT-5 系列（OpenAI 当家旗舰，默认带 reasoning）
-    "gpt-5.5": _DEFAULT_CAPS.model_copy(
-        update={
-            "name": "gpt-5.5",
-            "context_window": 400_000,
-            "max_output_tokens": 128_000,
-            "supports_thinking": True,
-        },
+    "deepseek-v4-pro": ModelCapabilities(
+        name="deepseek-v4-pro",
+        provider="deepseek",
+        context_window=128_000,
+        max_output_tokens=16_000,
+        supports_thinking=True,
+        supports_prompt_cache=True,
+        cn_quality="high",
+        cost_input_per_mtok=0.27,
+        cost_output_per_mtok=1.10,
     ),
-    "gpt-5.4": _DEFAULT_CAPS.model_copy(
-        update={
-            "name": "gpt-5.4",
-            "context_window": 200_000,
-            "max_output_tokens": 64_000,
-            "supports_thinking": True,
-        },
+    "deepseek-v4-flash": ModelCapabilities(
+        name="deepseek-v4-flash",
+        provider="deepseek",
+        context_window=128_000,
+        max_output_tokens=8192,
+        supports_thinking=True,
+        supports_prompt_cache=True,
+        cn_quality="high",
+        cost_input_per_mtok=0.07,
+        cost_output_per_mtok=0.28,
     ),
-    # o 系列 reasoning 模型
-    "o3": _DEFAULT_CAPS.model_copy(
-        update={
-            "name": "o3",
-            "context_window": 200_000,
-            "max_output_tokens": 100_000,
-            "supports_thinking": True,
-        },
+    # 旧名兼容（2026/07/24 弃用）
+    "deepseek-chat": ModelCapabilities(
+        name="deepseek-chat",
+        provider="deepseek",
+        context_window=128_000,
+        max_output_tokens=8192,
+        supports_thinking=False,
+        supports_prompt_cache=True,
+        cn_quality="high",
     ),
-    "o3-mini": _DEFAULT_CAPS.model_copy(
-        update={
-            "name": "o3-mini",
-            "context_window": 200_000,
-            "max_output_tokens": 100_000,
-            "supports_thinking": True,
-        },
-    ),
-    "o1": _DEFAULT_CAPS.model_copy(
-        update={
-            "name": "o1",
-            "context_window": 200_000,
-            "max_output_tokens": 100_000,
-            "supports_thinking": True,
-            "supports_parallel_tool_calls": False,
-        },
-    ),
-    # GPT-4o（仍在用作经济模型）
-    "gpt-4o": _DEFAULT_CAPS.model_copy(
-        update={"name": "gpt-4o", "context_window": 128_000, "max_output_tokens": 16_384},
-    ),
-    "gpt-4o-mini": _DEFAULT_CAPS.model_copy(
-        update={"name": "gpt-4o-mini", "context_window": 128_000, "max_output_tokens": 16_384},
+    "deepseek-reasoner": ModelCapabilities(
+        name="deepseek-reasoner",
+        provider="deepseek",
+        context_window=128_000,
+        max_output_tokens=8192,
+        supports_thinking=True,
+        supports_prompt_cache=True,
+        cn_quality="high",
     ),
 }
 
 
-def _is_reasoning_model(model: str) -> bool:
-    """识别 OpenAI reasoning 模型——它们走 max_completion_tokens 而不是 max_tokens。"""
-    return model.startswith(("o1", "o3", "o4", "gpt-5"))
-
-
-def _adapt_kwargs(model: str, kwargs: dict[str, Any]) -> dict[str, Any]:
-    """把通用 max_tokens 参数迁移到 reasoning 模型期望的 max_completion_tokens。"""
-    if _is_reasoning_model(model) and "max_tokens" in kwargs:
-        kwargs["max_completion_tokens"] = kwargs.pop("max_tokens")
-    return kwargs
-
-
-def _to_openai_messages(
+def _to_deepseek_messages(
     messages: Sequence[Message],
     system: str | None,
 ) -> list[dict[str, Any]]:
-    """统一 Message → OpenAI 入参。
+    """统一 Message → DeepSeek 入参。
 
-    - system 在 OpenAI 中是 messages[0]，role='system'
-    - role="tool" 消息：每个 ToolResultBlock 拆成一条独立的 OpenAI tool message
-    - thinking 块 OpenAI 端不支持，丢弃
+    关键点：assistant 消息若含 ThinkingBlock，必须把其文本写到 reasoning_content
+    字段一起回传，缺了就 400。
     """
     out: list[dict[str, Any]] = []
     if system is not None:
@@ -129,7 +99,6 @@ def _to_openai_messages(
         if m.role == "system":
             raise ValueError("system 应通过 system 参数传入，不能放进 messages")
 
-        # role="tool"：每个块独立成一条 OpenAI tool message
         if m.role == "tool":
             if isinstance(m.content, str):
                 continue
@@ -147,11 +116,15 @@ def _to_openai_messages(
         if isinstance(m.content, str):
             out.append({"role": m.role, "content": m.content})
             continue
+
         text_parts: list[str] = []
+        thinking_parts: list[str] = []
         tool_calls: list[dict[str, Any]] = []
         for b in m.content:
             if isinstance(b, TextBlock):
                 text_parts.append(b.text)
+            elif isinstance(b, ThinkingBlock):
+                thinking_parts.append(b.text)
             elif isinstance(b, ToolCallBlock):
                 tool_calls.append(
                     {
@@ -161,6 +134,9 @@ def _to_openai_messages(
                     },
                 )
         msg: dict[str, Any] = {"role": m.role, "content": "".join(text_parts) or None}
+        # 仅 assistant 消息可携带 reasoning_content
+        if thinking_parts and m.role == "assistant":
+            msg["reasoning_content"] = "".join(thinking_parts)
         if tool_calls:
             msg["tool_calls"] = tool_calls
         out.append(msg)
@@ -168,41 +144,40 @@ def _to_openai_messages(
 
 
 def _parse_usage(u: Any) -> Usage:
-    """OpenAI usage 含 prompt_tokens_details.cached_tokens（自动 prefix cache 命中）。"""
+    """解析 DeepSeek usage，含 prompt_cache_hit/miss 字段。"""
     if u is None:
         return Usage()
-    cached = 0
-    details = getattr(u, "prompt_tokens_details", None)
-    if details is not None:
-        cached = getattr(details, "cached_tokens", 0) or 0
+    cache_hit = getattr(u, "prompt_cache_hit_tokens", 0) or 0
     return Usage(
         input_tokens=u.prompt_tokens or 0,
         output_tokens=u.completion_tokens or 0,
-        cache_read_tokens=cached,
+        cache_read_tokens=cache_hit,
     )
 
 
-class OpenAIProvider(LLMProvider):
-    """OpenAI 官方 / openai-compatible Provider。
+class DeepSeekProvider(LLMProvider):
+    """DeepSeek 专用 Provider。"""
 
-    DeepSeek 已独立到 [deepseek.py](deepseek.py)；此 Provider 只服务 OpenAI 官方
-    与第三方兼容端点（OneAPI / Ollama / Kimi / 智谱 / 火山方舟……）。
-    """
+    name = "deepseek"
 
-    def __init__(
-        self,
-        *,
-        api_key: str,
-        base_url: str | None = None,
-        provider_name: str = "openai",
-    ) -> None:
-        self.name = provider_name
-        self._client = AsyncOpenAI(api_key=api_key, base_url=base_url)
+    def __init__(self, *, api_key: str, base_url: str | None = None) -> None:
+        self._client = AsyncOpenAI(
+            api_key=api_key,
+            base_url=base_url or "https://api.deepseek.com",
+        )
 
     def capabilities(self, model: str) -> ModelCapabilities:
         if model in _KNOWN_CAPS:
             return _KNOWN_CAPS[model]
-        return _DEFAULT_CAPS.model_copy(update={"name": model, "provider": self.name})
+        return ModelCapabilities(
+            name=model,
+            provider="deepseek",
+            context_window=128_000,
+            max_output_tokens=8192,
+            supports_thinking=False,
+            supports_prompt_cache=True,
+            cn_quality="high",
+        )
 
     async def chat(
         self,
@@ -217,20 +192,23 @@ class OpenAIProvider(LLMProvider):
     ) -> AssistantMessage:
         kwargs: dict[str, Any] = {
             "model": model,
-            "messages": _to_openai_messages(messages, system),
+            "messages": _to_deepseek_messages(messages, system),
             "max_tokens": max_tokens,
             "temperature": temperature,
         }
         if tools:
             kwargs["tools"] = list(tools)
         kwargs.update(extra)
-        kwargs = _adapt_kwargs(model, kwargs)
 
         resp = await self._client.chat.completions.create(**kwargs)
         choice = resp.choices[0]
         msg = choice.message
 
         blocks: list[ContentBlock] = []
+        # 思维链放在最前，与 Anthropic 行为一致
+        reasoning = getattr(msg, "reasoning_content", None)
+        if reasoning:
+            blocks.append(ThinkingBlock(text=reasoning))
         if msg.content:
             blocks.append(TextBlock(text=msg.content))
         if msg.tool_calls:
@@ -272,7 +250,7 @@ class OpenAIProvider(LLMProvider):
     ) -> AsyncIterator[Delta]:
         kwargs: dict[str, Any] = {
             "model": model,
-            "messages": _to_openai_messages(messages, system),
+            "messages": _to_deepseek_messages(messages, system),
             "max_tokens": max_tokens,
             "temperature": temperature,
             "stream": True,
@@ -281,12 +259,10 @@ class OpenAIProvider(LLMProvider):
         if tools:
             kwargs["tools"] = list(tools)
         kwargs.update(extra)
-        kwargs = _adapt_kwargs(model, kwargs)
 
-        # OpenAI 流式特性：text 是单一隐式块（index=0）；tool_calls 通过
-        # delta.tool_calls[*].index 区分，相同 index 的 args 增量在多个 chunk 里累积。
         text_started = False
-        # tc_index → (id, name, args_buf)
+        thinking_started = False
+        thinking_closed = False
         tool_state: dict[int, dict[str, str]] = {}
         final_usage: Usage | None = None
         final_stop_reason: str | None = None
@@ -308,20 +284,36 @@ class OpenAIProvider(LLMProvider):
             choice = chunk.choices[0]
             delta = choice.delta
 
+            # thinking 段先来后走
+            reasoning_chunk = getattr(delta, "reasoning_content", None)
+            if reasoning_chunk:
+                if not thinking_started:
+                    thinking_started = True
+                    yield Delta(type="thinking_start", index=0)
+                yield Delta(type="thinking_delta", index=0, text=reasoning_chunk)
+
             if delta.content:
+                # 进入正文前先收尾思维链
+                if thinking_started and not thinking_closed:
+                    yield Delta(type="thinking_end", index=0)
+                    thinking_closed = True
                 if not text_started:
                     text_started = True
-                    yield Delta(type="text_start", index=0)
-                yield Delta(type="text_delta", index=0, text=delta.content)
+                    yield Delta(type="text_start", index=1)
+                yield Delta(type="text_delta", index=1, text=delta.content)
 
             if delta.tool_calls:
+                # 工具调用前同样先收尾思维链
+                if thinking_started and not thinking_closed:
+                    yield Delta(type="thinking_end", index=0)
+                    thinking_closed = True
                 for tc in delta.tool_calls:
                     idx = tc.index
                     if idx not in tool_state:
                         tool_state[idx] = {"id": "", "name": "", "args": ""}
                         yield Delta(
                             type="tool_call_start",
-                            index=idx + 1,  # +1 避免与 text 块的 index=0 撞车
+                            index=idx + 2,  # 0=thinking 1=text 2+=tools
                             tool_call_id=tc.id or "",
                             tool_name=tc.function.name if tc.function else "",
                         )
@@ -333,16 +325,18 @@ class OpenAIProvider(LLMProvider):
                         tool_state[idx]["args"] += tc.function.arguments
                         yield Delta(
                             type="tool_call_delta",
-                            index=idx + 1,
+                            index=idx + 2,
                             args_json_chunk=tc.function.arguments,
                         )
 
             if choice.finish_reason:
                 final_stop_reason = stop_map.get(choice.finish_reason, "end_turn")
 
-        # 收尾：先关 text 块，再关所有 tool 块
+        # 收尾：思维链 → 文本 → 工具
+        if thinking_started and not thinking_closed:
+            yield Delta(type="thinking_end", index=0)
         if text_started:
-            yield Delta(type="text_end", index=0)
+            yield Delta(type="text_end", index=1)
         for idx, state in tool_state.items():
             try:
                 args_final = json.loads(state["args"] or "{}")
@@ -350,7 +344,7 @@ class OpenAIProvider(LLMProvider):
                 args_final = {}
             yield Delta(
                 type="tool_call_end",
-                index=idx + 1,
+                index=idx + 2,
                 args_final=args_final,
             )
 

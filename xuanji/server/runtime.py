@@ -181,6 +181,7 @@ class ServerRuntime:
             project_root=self.project_root,
             static_extra=self.fivem_static_extra(),
             hooks=HooksRegistry(hooks_dir()),
+            compaction=cfg.compaction,
         )
 
 

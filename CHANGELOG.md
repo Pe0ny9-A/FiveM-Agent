@@ -2,6 +2,70 @@
 
 所有重要的变更都记在这里。版本号遵守 [SemVer](https://semver.org/lang/zh-CN/)。
 
+## [0.9.1] — 2026-05-26
+
+**三家 Provider 各自适配，每家发挥最强性能 + 上下文自动压缩**。
+
+0.9.0 之前 DeepSeek 与 OpenAI 共用一个 Provider，导致 DeepSeek thinking 模型在多轮
+对话第二轮报 `BadRequestError 400 — The reasoning_content in the thinking mode
+must be passed back to the API`——message 编码层把 ThinkingBlock 直接丢了。
+0.9.1 把三家 Provider 拆开各自专精，并把 thinking / cache / 上下文压缩做成一等公民。
+
+### Fixed
+
+- **DeepSeek thinking 多轮 400 报错**：`reasoning_content` 现在双向往返 —— 解析时
+  抽到 ThinkingBlock，编码时写回 assistant 消息的 `reasoning_content` 字段。流式
+  里也分发 `thinking_start / thinking_delta / thinking_end` 事件。
+  ([xuanji/llm/providers/deepseek.py](xuanji/llm/providers/deepseek.py))
+
+### Changed · 三家 Provider 各自分工
+
+| Provider | 文件 | 独门特性（一等公民） |
+|---|---|---|
+| Anthropic | `xuanji/llm/providers/anthropic.py` | `thinking_budget=N` 自动展开为 `thinking={"type":"enabled","budget_tokens":N}` + 强制 `temperature=1`；`cache_system=True` 把 system 包成 `cache_control` ephemeral 块 |
+| OpenAI | `xuanji/llm/providers/openai.py` | `_is_reasoning_model()` 识别 o1/o3/o4/gpt-5 系列，自动把 `max_tokens` 迁到 `max_completion_tokens`；`prompt_tokens_details.cached_tokens` 计入 Usage |
+| DeepSeek | `xuanji/llm/providers/deepseek.py` **(新)** | `reasoning_content` 双向往返；`prompt_cache_hit_tokens` 计入 `cache_read_tokens`；流式时 thinking 段先于 text/tool 段 |
+
+`factory.py` 路由：DeepSeekProfile → DeepSeekProvider，不再共用 OpenAIProvider。
+
+### Added · 自动识别带缓存的模型
+
+[Conductor](xuanji/neural/conductor.py) 每轮请求前查 `provider.capabilities(model).supports_prompt_cache`，
+Anthropic 自动注入 `cache_system=True`；OpenAI / DeepSeek 是自动 prefix cache 不需要参数。
+
+### Added · 上下文自动压缩
+
+新模块 [xuanji/neural/compaction.py](xuanji/neural/compaction.py)：
+
+- `CompactionConfig`：`enabled` / `max_context_tokens`（默认 80k）/
+  `keep_recent_turns`（默认 4）/ `summary_per_turn_chars`
+- 触发阈值后把切点之前的消息折叠成一条带 `[历史摘要]` 标记的 user 消息
+- **切点必须落在 user 消息上**——不会把 `tool_call` 与 `tool_result` 劈开
+- **ThinkingBlock 不进摘要**——下一轮 reasoning 模型会重新生成
+- 写到 `XuanjiConfig.compaction`，小宝改 `config.json` 就能调阈值
+
+### Added · Conductor 累积 ThinkingBlock 到 history
+
+[xuanji/neural/conductor.py:333](xuanji/neural/conductor.py#L333) 的 `asst_blocks`
+类型扩展为 `list[TextBlock | ThinkingBlock | ToolCallBlock]`，把流式 `thinking_delta`
+累积进 history。这是 DeepSeek `reasoning_content` 往返的前置条件。
+
+### 质量
+
+| | |
+|---|---|
+| 单测 | **379 全过**（354 → 379，+25：13 Provider 拆分 + 8 压缩 + 4 factory 路由） |
+| ruff | **0 告警**（95 源文件） |
+| mypy strict | **0 告警**（95 源文件） |
+| 工具数 | 静态 29 + published 动态加载（同 0.9.0） |
+
+### 升级提示
+
+API 没有 breaking change。`xuanji version` 应当显示 `0.9.1`。如果原来在用
+DeepSeek 且遇到过多轮 400 报错，本版直接修好。
+
+---
+
 ## [0.9.0] — 2026-05-26
 
 **ToolFactory 闭环 — generate / test / publish / reject CLI 全打通 + published 启动期自动加载**。
