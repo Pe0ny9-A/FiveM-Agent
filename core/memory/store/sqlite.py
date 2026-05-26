@@ -18,6 +18,7 @@ from contextlib import contextmanager
 from pathlib import Path
 from typing import Any
 
+from core.knowledge.tokenize import preprocess_text
 from core.memory.models import Memory, MemoryKind, MemoryScope
 
 _SCHEMA = """
@@ -40,31 +41,14 @@ CREATE INDEX IF NOT EXISTS idx_mem_namespace ON memories(namespace);
 CREATE INDEX IF NOT EXISTS idx_mem_scope ON memories(scope);
 CREATE INDEX IF NOT EXISTS idx_mem_kind ON memories(kind);
 
+-- 独立 FTS5（非 external content），索引存 jieba 预处理版
 CREATE VIRTUAL TABLE IF NOT EXISTS memories_fts USING fts5(
     text,
     summary,
     namespace UNINDEXED,
-    content=memories,
-    content_rowid=rowid,
+    mem_id UNINDEXED,
     tokenize='unicode61 remove_diacritics 2'
 );
-
-CREATE TRIGGER IF NOT EXISTS memories_ai AFTER INSERT ON memories BEGIN
-    INSERT INTO memories_fts(rowid, text, summary, namespace)
-    VALUES (new.rowid, new.text, COALESCE(new.summary, ''), new.namespace);
-END;
-
-CREATE TRIGGER IF NOT EXISTS memories_ad AFTER DELETE ON memories BEGIN
-    INSERT INTO memories_fts(memories_fts, rowid, text, summary, namespace)
-    VALUES ('delete', old.rowid, old.text, COALESCE(old.summary, ''), old.namespace);
-END;
-
-CREATE TRIGGER IF NOT EXISTS memories_au AFTER UPDATE ON memories BEGIN
-    INSERT INTO memories_fts(memories_fts, rowid, text, summary, namespace)
-    VALUES ('delete', old.rowid, old.text, COALESCE(old.summary, ''), old.namespace);
-    INSERT INTO memories_fts(rowid, text, summary, namespace)
-    VALUES (new.rowid, new.text, COALESCE(new.summary, ''), new.namespace);
-END;
 """
 
 
@@ -72,7 +56,9 @@ _FTS_DANGEROUS = set('"\'()*:^-')
 
 
 def _sanitize_query(q: str) -> str:
-    cleaned = "".join(c if c not in _FTS_DANGEROUS else " " for c in q)
+    """jieba 切词 → 剥 FTS5 元字符 → phrase OR 合成。"""
+    pre = preprocess_text(q)
+    cleaned = "".join(c if c not in _FTS_DANGEROUS else " " for c in pre)
     tokens = [t for t in cleaned.split() if t]
     if not tokens:
         return ""
@@ -108,23 +94,22 @@ class SqliteMemoryStore:
 
     def write(self, memory: Memory) -> Memory:
         with self._connect() as conn:
-            conn.execute(
+            # 拿旧 rowid 用于删除 FTS5 旧条目
+            old_row = conn.execute(
+                "SELECT rowid FROM memories WHERE id = ?", (memory.id,)
+            ).fetchone()
+            if old_row is not None:
+                conn.execute(
+                    "DELETE FROM memories_fts WHERE rowid = ?", (old_row["rowid"],)
+                )
+                conn.execute("DELETE FROM memories WHERE id = ?", (memory.id,))
+            cur = conn.execute(
                 """
                 INSERT INTO memories (
                     id, scope, kind, namespace, text, summary,
                     importance, tags, metadata,
                     created_at, last_accessed, hits
                 ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-                ON CONFLICT(id) DO UPDATE SET
-                    scope=excluded.scope,
-                    kind=excluded.kind,
-                    namespace=excluded.namespace,
-                    text=excluded.text,
-                    summary=excluded.summary,
-                    importance=excluded.importance,
-                    tags=excluded.tags,
-                    metadata=excluded.metadata,
-                    last_accessed=excluded.last_accessed
                 """,
                 (
                     memory.id,
@@ -139,6 +124,20 @@ class SqliteMemoryStore:
                     memory.created_at,
                     memory.last_accessed,
                     memory.hits,
+                ),
+            )
+            rowid = cur.lastrowid
+            conn.execute(
+                """
+                INSERT INTO memories_fts (rowid, text, summary, namespace, mem_id)
+                VALUES (?, ?, ?, ?, ?)
+                """,
+                (
+                    rowid,
+                    preprocess_text(memory.text),
+                    preprocess_text(memory.summary or ""),
+                    memory.namespace,
+                    memory.id,
                 ),
             )
         return memory
@@ -259,10 +258,25 @@ class SqliteMemoryStore:
             params.append(scope.value)
         if not clauses:
             return 0
-        sql = "DELETE FROM memories WHERE " + " AND ".join(clauses)
+        where = " AND ".join(clauses)
         with self._connect() as conn:
-            cur = conn.execute(sql, params)
-            return cur.rowcount
+            # 同步删 FTS5
+            row_ids = [
+                r["rowid"]
+                for r in conn.execute(
+                    f"SELECT rowid FROM memories WHERE {where}", params
+                ).fetchall()
+            ]
+            if row_ids:
+                placeholders = ",".join("?" * len(row_ids))
+                conn.execute(
+                    f"DELETE FROM memories_fts WHERE rowid IN ({placeholders})",
+                    row_ids,
+                )
+            cur = conn.execute(
+                f"DELETE FROM memories WHERE {where}", params
+            )
+            return cur.rowcount or 0
 
     def consolidate(self, namespace: str, *, max_kept: int = 100) -> int:
         """超出 max_kept 时按 importance × log(1+hits) 倒序保留前 N。"""
@@ -285,6 +299,20 @@ class SqliteMemoryStore:
             if not doomed_ids:
                 return 0
             placeholders = ",".join("?" * len(doomed_ids))
+            # 先同步删 FTS5
+            doomed_rowids = [
+                r["rowid"]
+                for r in conn.execute(
+                    f"SELECT rowid FROM memories WHERE id IN ({placeholders})",
+                    doomed_ids,
+                ).fetchall()
+            ]
+            if doomed_rowids:
+                rid_ph = ",".join("?" * len(doomed_rowids))
+                conn.execute(
+                    f"DELETE FROM memories_fts WHERE rowid IN ({rid_ph})",
+                    doomed_rowids,
+                )
             cur = conn.execute(
                 f"DELETE FROM memories WHERE id IN ({placeholders})",
                 doomed_ids,

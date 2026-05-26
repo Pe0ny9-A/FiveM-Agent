@@ -57,3 +57,27 @@ def tool_drafts_dir() -> Path:
     p = data_dir() / "tool_drafts"
     p.mkdir(parents=True, exist_ok=True)
     return p
+
+
+def crawl_cache_path() -> Path:
+    """爬虫的 URL→content_hash 缓存（增量去重用）。"""
+    return data_dir() / "crawl_cache.json"
+
+
+def tool_staged_dir() -> Path:
+    """工具工厂 staged 目录：codegen 完成、待 test/publish 的代码。"""
+    p = data_dir() / "tool_staged"
+    p.mkdir(parents=True, exist_ok=True)
+    return p
+
+
+def tool_published_dir() -> Path:
+    """工具工厂 published 目录：通过 review 的可加载工具。"""
+    p = data_dir() / "tool_published"
+    p.mkdir(parents=True, exist_ok=True)
+    return p
+
+
+def factory_db_path() -> Path:
+    """ToolFactory 状态数据库。"""
+    return data_dir() / "tool_factory.db"

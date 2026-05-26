@@ -1,0 +1,36 @@
+{
+  "$schema": "https://schema.tauri.app/config/2",
+  "productName": "玄玑",
+  "version": "0.3.0",
+  "identifier": "com.xuanji.fivem-agent",
+  "build": {
+    "beforeDevCommand": "uv run xuanji serve --host 127.0.0.1 --port 8765",
+    "devUrl": "http://127.0.0.1:8765",
+    "frontendDist": "../web-dist"
+  },
+  "app": {
+    "windows": [
+      {
+        "title": "玄玑 · FiveM 智能体",
+        "width": 1100,
+        "height": 760,
+        "minWidth": 800,
+        "minHeight": 500,
+        "resizable": true,
+        "fullscreen": false,
+        "decorations": true,
+        "transparent": false
+      }
+    ],
+    "security": {
+      "csp": null
+    }
+  },
+  "bundle": {
+    "active": true,
+    "targets": "all",
+    "category": "DeveloperTool",
+    "shortDescription": "玄玑 · FiveM 智能体桌面端",
+    "longDescription": "FiveM 资源插件开发与服务器运维双线助手——QBCore / QBox / ESX / OX 全家桶 + NPC 插件。"
+  }
+}

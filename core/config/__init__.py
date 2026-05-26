@@ -10,10 +10,14 @@
 from core.config.paths import (
     config_dir,
     config_file_path,
+    crawl_cache_path,
     data_dir,
+    factory_db_path,
     knowledge_db_path,
     memory_db_path,
     tool_drafts_dir,
+    tool_published_dir,
+    tool_staged_dir,
 )
 from core.config.profiles import (
     AnthropicProfile,
@@ -36,8 +40,12 @@ __all__ = [
     "XuanjiConfig",
     "config_dir",
     "config_file_path",
+    "crawl_cache_path",
     "data_dir",
+    "factory_db_path",
     "knowledge_db_path",
     "memory_db_path",
     "tool_drafts_dir",
+    "tool_published_dir",
+    "tool_staged_dir",
 ]

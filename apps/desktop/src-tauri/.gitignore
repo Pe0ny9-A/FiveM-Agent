@@ -1,0 +1,8 @@
+# Tauri build artifacts
+target/
+
+# Tauri runtime
+.cargo/
+
+# 不提交 lockfile（开发期会变）
+Cargo.lock

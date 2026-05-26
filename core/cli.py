@@ -1137,5 +1137,43 @@ def main() -> None:
     app()
 
 
+# ---------- serve ----------
+
+
+@app.command()
+def serve(
+    host: str = typer.Option("127.0.0.1", "--host", "-h", help="监听地址"),
+    port: int = typer.Option(8765, "--port", "-p", help="监听端口"),
+    reload: bool = typer.Option(False, "--reload", help="代码改动自动重载（开发用）"),
+) -> None:
+    """启动 FastAPI 服务（HTTP + WebSocket）。
+
+    打开 http://127.0.0.1:8765 即可在浏览器里跟玄玑聊。
+    """
+    import uvicorn
+
+    from core.server.app import create_app
+
+    cfg = ConfigStore().load()
+    if cfg.get_active() is None:
+        console.print(
+            "[red]还没有激活的 profile。先 [bold]xuanji config add[/bold] 加一个再启动服务。[/red]"
+        )
+        raise typer.Exit(1)
+
+    if reload:
+        # reload 模式只能传 import string
+        uvicorn.run(
+            "core.server.app:create_app",
+            host=host,
+            port=port,
+            factory=True,
+            reload=True,
+        )
+    else:
+        app_instance = create_app()
+        uvicorn.run(app_instance, host=host, port=port)
+
+
 if __name__ == "__main__":
     main()

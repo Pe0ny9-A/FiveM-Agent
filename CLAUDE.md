@@ -90,31 +90,49 @@ uv run xuanji config use <name>  # 切换 profile
 uv run xuanji chat             # 进入对话
 ```
 
-## 当前进度（截至 0.2.0）
+## 当前进度（截至 0.3.0）
 
 - [x] M0 骨架 + 三家 LLM Provider + 配置系统 + 玄玑人设
-- [x] 天枢台 Conductor：会话上下文 + 多轮 tool loop + reflux + audit
+- [x] 天枢台 Conductor 多轮 tool loop + reflux + audit
 - [x] 百工坊 + 工造司 InProcSandbox + 司辰阁 GateInterceptor + HITL
-- [x] 稷下学宫 SQLite FTS5 + SkillGraph + 5 套种子（含 NPC AI 模板）
-- [x] 怀玉阁 SQLite + 三层 scope × 三类 kind + 衰减 Reflux
-- [x] **0.2.0 自演化能力**：21 个工具
-  - 元工具：`list_tools` / `describe_tool` / `list_skills` / `read_skill`
-  - 记忆：`recall_memory` / `write_memory`
-  - 知识 ingestion：`ingest_text` / `ingest_file` / `upsert_symbol` / `ingest_url`(NET)
-  - 技能：`save_skill` / `search_skill` / `run_skill`
-  - 工厂：`propose_tool`（仅产 JSON 草案到 `<data_dir>/tool_drafts/`）
-- [x] CLI：`info` / `chat` / `config` / `knowledge` / `memory` / `skill` / `tool`
-- [x] 质量门：ruff/mypy strict/pytest 三件套全绿，**108 单测**
-- [ ] 群英会、桌面端、Web 端、向量检索、爬虫、ToolFactory 自动实现链路（M3+）
+- [x] 稷下学宫 SQLite FTS5 + jieba 中文分词 + 向量混合检索 + 5 套种子
+- [x] 怀玉阁 SQLite 三层 scope × 三类 kind + 衰减 Reflux
+- [x] 0.2 自演化：21 工具（meta/memory/ingest/skill/factory）
+- [x] **0.3 群英会**：Supervisor + 3 角色（researcher/coder/reviewer）+ dispatch_subagent
+- [x] **0.3 爬虫**：BFS + 增量 + crawl_site 工具（NET → HITL）
+- [x] **0.3 ToolFactory**：propose → generate(LLM) → test(subprocess) → publish 四步
+- [x] **0.3 FastAPI 服务**：WebSocket 流式聊天 + REST CRUD + WebSocketHITL 桥
+- [x] **0.3 Web 前端**：嵌入式单页 HTML（暗色主题 + 工具事件 + HITL 弹卡）
+- [x] **0.3 Tauri 桌面**：apps/desktop 配置 + 自启 Python 后端
+- [x] CLI：`info` / `chat` / `serve` / `config` / `knowledge` / `memory` / `skill` / `tool`
+- [x] 质量门：ruff/mypy strict/pytest 三件套全绿，**173 单测 / 23 工具**
 
-### 0.2.0 关键设计
+### 0.3.0 关键设计
 
-**技能 = procedural memory**：不引入新执行单元，技能本质是「做事套路 + 工具引用」，
-直接复用 `MemoryStore`，吃到 reflux / 衰减 / 命名空间隔离。
+**召唤 sub-agent = 工具调用**：群英会不引入新调度机制——`dispatch_subagent`
+就是一个普通工具，主 Conductor 的 audit / gate / 流式自动覆盖。
 
-**安全收口**：玄玑能写知识、写记忆、写技能，**不能写可执行代码**。
-`propose_tool` 仅产 JSON 草案到磁盘，由小宝 review 后人工实现并注册到 ToolRegistry。
-这是 LLM Agent 的最大风险面收口。
+**LanceDB 占位**：M3 用零依赖 InMemoryVectorStore + 协议化设计先把
+hybrid_search 跑通；M4+ 换实现时调用方零改动。
+
+**ToolFactory 安全核心**：玄玑只能 `propose_tool` 落 JSON；generate/test/publish
+都是 CLI 命令，LLM 没法触发。生成的代码先入 staged/，跑过 pytest 才能 publish 到
+production registry。
+
+### 关键命令速查
+
+```bash
+# 启动 FastAPI 服务（Web/桌面共享内核）
+uv run xuanji serve
+
+# 桌面端（需 Rust + Node）
+cd apps/desktop && pnpm tauri dev
+
+# 三件套
+uv run ruff check core/ tests/
+uv run mypy core/
+uv run pytest
+```
 
 ## 给姐姐的提示
 

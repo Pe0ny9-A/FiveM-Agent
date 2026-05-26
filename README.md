@@ -6,29 +6,54 @@ FiveM 资源插件开发 + 服务器运维治理双线助手。深度熟悉 QBCo
 **也帮你写 NPC 插件**：ped 配置、巡逻 AI、对话树、行为状态机、qb-target / ox_target 交互——产物是 Lua 代码与 JSON 配置，运行时由 FiveM server 自己跑。玄玑不直接控制运行中的游戏世界。
 
 [![python](https://img.shields.io/badge/python-3.12+-blue)](https://www.python.org/)
-[![status](https://img.shields.io/badge/status-0.2.0%20alpha-orange)]()
-[![tests](https://img.shields.io/badge/tests-108%20passed-brightgreen)]()
-[![tools](https://img.shields.io/badge/tools-21%20registered-blueviolet)]()
+[![status](https://img.shields.io/badge/status-0.3.0%20alpha-orange)]()
+[![tests](https://img.shields.io/badge/tests-173%20passed-brightgreen)]()
+[![tools](https://img.shields.io/badge/tools-23%20registered-blueviolet)]()
 
-## 当前进度（0.2.0 · 自演化能力闭环）
+## 当前进度（0.3.0 · M3 全家桶闭环）
 
 - [x] **M0 骨架**：项目结构、uv、ruff、mypy strict、pytest
-- [x] **LLM 抽象**：统一消息/内容块/Delta，跨厂商无差别
-- [x] **三家 Provider**：Anthropic / OpenAI / DeepSeek 都可用，并支持任意 OpenAI 兼容端点
+- [x] **LLM 抽象**：跨厂商统一消息/内容块/Delta + Anthropic / OpenAI / DeepSeek 三家 Provider
 - [x] **配置系统**：跨平台 JSON 配置 + 四种 profile kind
-- [x] **玄玑人设**：5 模式（chat/dev/ops/review/gate）× 3 温度 + 双向可调称呼 + 自演化导引
+- [x] **玄玑人设**：5 模式 × 3 温度 + 双向可调称呼 + 自演化导引
 - [x] **天枢台 Conductor**：唯一调度入口 + 多轮 tool loop + reflux 自动注入
-- [x] **百工坊**：Tool/Registry + RiskTag 五档
-- [x] **司辰阁**：横切 Gate 中间件 + DefaultPolicy + HITLBridge
-- [x] **工造司**：InProcSandbox 同进程沙箱
-- [x] **稷下学宫**：SQLite FTS5 + SkillGraph + 含 NPC 模板的 5 套种子库
-- [x] **怀玉阁**：SQLite + 三层 scope × 三类 kind + 衰减打分 + Reflux
-- [x] **自演化能力**（0.2.0 新）：知识 ingestion + 记忆主动读写 + 技能系统 + 工具提案
-- [x] **21 个工具**：5 原子 + 2 知识 + 4 元 + 2 记忆 + 4 ingest + 3 skill + 1 factory
-- [x] **CLI**：`info` / `chat` / `config` / `knowledge` / `memory` / `skill` / `tool`
-- [x] **质量门**：ruff/mypy strict/pytest 三件套全绿，**108 个单测**
+- [x] **百工坊 / 司辰阁 / 工造司**：Tool/Registry + Gate 中间件 + InProc 沙箱
+- [x] **稷下学宫**：SQLite FTS5 + jieba 中文分词 + 向量混合检索 + 5 套 FiveM 种子
+- [x] **怀玉阁**：SQLite + 三层 scope × 三类 kind + 衰减 Reflux
+- [x] **0.2 自演化**：知识 ingestion / 记忆主动读写 / 技能系统 / propose_tool
+- [x] **0.3 群英会**：Supervisor + 三角色 sub-agent（researcher / coder / reviewer）
+- [x] **0.3 爬虫**：BFS + 域名白名单 + 增量去重 + crawl_site 工具
+- [x] **0.3 ToolFactory**：propose → generate(LLM) → test(subprocess) → publish 四步链路
+- [x] **0.3 服务层**：FastAPI + WebSocket 流式聊天 + 7 个 REST 端点
+- [x] **0.3 Web 前端**：嵌入式单页 HTML，原生 WS，HITL 弹卡
+- [x] **0.3 Tauri 桌面**：Tauri 2 配置 + Python 后端自启
+- [x] **23 个工具** · **CLI 8 个子命令族** · **173 个单测** · **三件套全绿**
 
-**未做（M3+ 待续）**：群英会 Ensemble 多 Agent 协作、Tauri 桌面端、Web 前端、向量检索（LanceDB）、爬虫与文档增量更新、合议式仲裁、ToolFactory 自动实现链路、jieba 中文分词。
+**未做（M4+ 待续）**：LanceDB 真实 embedder、合议式 Council、ToolFactory 接 sub-agent
+做 codegen review、Subprocess/Docker/WASM 沙箱档、移动端、远程 collab。
+
+## 启动
+
+```bash
+# 装依赖
+uv sync --extra dev
+
+# 加 profile
+uv run xuanji config add ds --kind deepseek
+
+# 导入 FiveM 种子知识
+uv run xuanji knowledge ingest
+
+# CLI 对话
+uv run xuanji chat
+
+# 启动 Web/桌面共用的 FastAPI 服务
+uv run xuanji serve
+# → 浏览器开 http://127.0.0.1:8765
+
+# 桌面端（需 Rust + Node）
+cd apps/desktop && pnpm install && pnpm tauri dev
+```
 
 ## 启动
 

@@ -17,6 +17,8 @@ from typing import Any
 
 from core.knowledge.models import Chunk, Namespace, Source, Symbol
 from core.knowledge.store.base import SearchHit
+from core.knowledge.tokenize import preprocess_text
+from core.knowledge.vector import Embedder, VectorStore
 
 _SCHEMA = """
 CREATE TABLE IF NOT EXISTS sources (
@@ -39,33 +41,16 @@ CREATE TABLE IF NOT EXISTS chunks (
 
 CREATE INDEX IF NOT EXISTS idx_chunks_namespace ON chunks(namespace);
 
+-- chunks_fts 是独立 FTS5 表（非 external content），存 jieba 预处理后的"索引版"。
+-- 不挂 content=chunks，因此触发器里我们手动塞预处理文本——unicode61 才能按词切。
 CREATE VIRTUAL TABLE IF NOT EXISTS chunks_fts USING fts5(
     text,
     namespace UNINDEXED,
     section UNINDEXED,
     source_title UNINDEXED,
-    content=chunks,
-    content_rowid=rowid,
+    chunk_id UNINDEXED,
     tokenize='unicode61 remove_diacritics 2'
 );
-
--- 触发器：chunks 与 chunks_fts 同步
-CREATE TRIGGER IF NOT EXISTS chunks_ai AFTER INSERT ON chunks BEGIN
-    INSERT INTO chunks_fts(rowid, text, namespace, section, source_title)
-    VALUES (new.rowid, new.text, new.namespace, new.section, new.source_title);
-END;
-
-CREATE TRIGGER IF NOT EXISTS chunks_ad AFTER DELETE ON chunks BEGIN
-    INSERT INTO chunks_fts(chunks_fts, rowid, text, namespace, section, source_title)
-    VALUES ('delete', old.rowid, old.text, old.namespace, old.section, old.source_title);
-END;
-
-CREATE TRIGGER IF NOT EXISTS chunks_au AFTER UPDATE ON chunks BEGIN
-    INSERT INTO chunks_fts(chunks_fts, rowid, text, namespace, section, source_title)
-    VALUES ('delete', old.rowid, old.text, old.namespace, old.section, old.source_title);
-    INSERT INTO chunks_fts(rowid, text, namespace, section, source_title)
-    VALUES (new.rowid, new.text, new.namespace, new.section, new.source_title);
-END;
 
 CREATE TABLE IF NOT EXISTS symbols (
     id         TEXT PRIMARY KEY,
@@ -93,9 +78,12 @@ _FTS_DANGEROUS = set('"\'()*:^-')
 def _sanitize_query(q: str) -> str:
     """把用户输入转成 FTS5 安全的 phrase 查询。
 
-    把每个 token 用双引号包成 phrase，避免用户输入里的运算符把语法搞坏。
+    流程：jieba 切词 → 剥离 FTS5 元字符 → token 用 phrase 匹配并 OR 合成。
+    中文连续短语经 jieba 切成多个词，能与 FTS5 倒排表里的 token 对齐，
+    解决纯 phrase 匹配时中文整段查不到的问题。
     """
-    cleaned = "".join(c if c not in _FTS_DANGEROUS else " " for c in q)
+    pre = preprocess_text(q)
+    cleaned = "".join(c if c not in _FTS_DANGEROUS else " " for c in pre)
     tokens = [t for t in cleaned.split() if t]
     if not tokens:
         return ""
@@ -110,6 +98,18 @@ class SqliteKnowledgeStore:
         self._path.parent.mkdir(parents=True, exist_ok=True)
         with self._connect() as conn:
             conn.executescript(_SCHEMA)
+        self._vector_store: VectorStore | None = None
+        self._embedder: Embedder | None = None
+
+    def attach_vector_index(self, embedder: Embedder, store: VectorStore) -> None:
+        """挂载向量索引。挂上后写 chunks 自动 embed + upsert，
+        search 可走 hybrid_search() 做 FTS5 + 向量融合。"""
+        if embedder.dim != store.dim:
+            raise ValueError(
+                f"embedder.dim ({embedder.dim}) != store.dim ({store.dim})"
+            )
+        self._embedder = embedder
+        self._vector_store = store
 
     @contextmanager
     def _connect(self) -> Iterator[sqlite3.Connection]:
@@ -148,14 +148,47 @@ class SqliteKnowledgeStore:
             return
         with self._connect() as conn:
             for c in chunks:
-                conn.execute("DELETE FROM chunks WHERE id = ?", (c.id,))
-                conn.execute(
+                # 拿当前条目的 rowid（如果存在）以便 FTS5 同步删除
+                old_row = conn.execute(
+                    "SELECT rowid FROM chunks WHERE id = ?", (c.id,)
+                ).fetchone()
+                if old_row is not None:
+                    conn.execute(
+                        "DELETE FROM chunks_fts WHERE rowid = ?", (old_row["rowid"],)
+                    )
+                    conn.execute("DELETE FROM chunks WHERE id = ?", (c.id,))
+                cur = conn.execute(
                     """
                     INSERT INTO chunks (id, namespace, source_title, section, text, url)
                     VALUES (?, ?, ?, ?, ?, ?)
                     """,
                     (c.id, c.namespace, c.source_title, c.section, c.text, c.url),
                 )
+                rowid = cur.lastrowid
+                # FTS5 索引存预处理版（jieba 切词）
+                conn.execute(
+                    """
+                    INSERT INTO chunks_fts (rowid, text, namespace, section, source_title, chunk_id)
+                    VALUES (?, ?, ?, ?, ?, ?)
+                    """,
+                    (
+                        rowid,
+                        preprocess_text(c.text),
+                        c.namespace,
+                        c.section or "",
+                        c.source_title,
+                        c.id,
+                    ),
+                )
+        # 向量索引：挂载了就自动 embed + upsert
+        if self._embedder is not None and self._vector_store is not None:
+            embeddings = self._embedder.embed_batch([c.text for c in chunks])
+            self._vector_store.upsert_batch(
+                [
+                    (c.id, vec, {"namespace": c.namespace, "source_title": c.source_title})
+                    for c, vec in zip(chunks, embeddings, strict=True)
+                ],
+            )
 
     def upsert_symbols(self, symbols: list[Symbol]) -> None:
         if not symbols:
@@ -238,7 +271,9 @@ class SqliteKnowledgeStore:
             score = -float(r["score"])
             # 试着给 chunk 找一个匹配的 symbol 作为锚点
             anchor = self._guess_anchor_symbol(query, chunk.namespace)
-            hits.append(SearchHit(chunk=chunk, score=score, matched_symbol=anchor))
+            hits.append(
+                SearchHit(chunk=chunk, score=score, matched_symbol=anchor, source="fts"),
+            )
         return hits
 
     def _guess_anchor_symbol(self, query: str, ns: Namespace) -> Symbol | None:
@@ -329,11 +364,95 @@ class SqliteKnowledgeStore:
 
     def clear_namespace(self, namespace: Namespace) -> int:
         with self._connect() as conn:
+            # 先把 FTS5 行删了（拿 rowid）再删 chunks
+            rows = conn.execute(
+                "SELECT rowid FROM chunks WHERE namespace = ?", (namespace,)
+            ).fetchall()
+            row_ids = [r["rowid"] for r in rows]
+            if row_ids:
+                placeholders = ",".join("?" * len(row_ids))
+                conn.execute(
+                    f"DELETE FROM chunks_fts WHERE rowid IN ({placeholders})",
+                    row_ids,
+                )
             cur = conn.execute("DELETE FROM chunks WHERE namespace = ?", (namespace,))
             n_chunks = cur.rowcount
             conn.execute("DELETE FROM symbols WHERE namespace = ?", (namespace,))
             conn.execute("DELETE FROM sources WHERE namespace = ?", (namespace,))
+        # 向量索引同步清
+        if self._vector_store is not None:
+            self._vector_store.delete_namespace(namespace)
         return n_chunks
+
+    # ---------------- 混合检索 ----------------
+
+    def hybrid_search(
+        self,
+        query: str,
+        *,
+        namespaces: list[Namespace] | None = None,
+        k: int = 8,
+        fts_weight: float = 0.6,
+    ) -> list[SearchHit]:
+        """FTS5 关键词 + 向量语义 RRF 融合。
+
+        - fts_weight ∈ [0, 1]：FTS5 在融合中的权重，向量占 1 - fts_weight
+        - 没挂向量索引时退化为纯 FTS5 search
+        - 用 Reciprocal Rank Fusion (RRF) 而不是分数加权——
+          因为 bm25 与余弦相似度量纲不同，rank-based 融合更稳
+        """
+        fts_hits = self.search(query, namespaces=namespaces, k=k * 2)
+        if self._embedder is None or self._vector_store is None:
+            return fts_hits[:k]
+
+        # 向量召回
+        qvec = self._embedder.embed(query)
+        ns_filter = namespaces[0] if namespaces and len(namespaces) == 1 else None
+        vec_hits = self._vector_store.search(
+            qvec, k=k * 2, filter_namespace=ns_filter,
+        )
+
+        # RRF：rank-based 融合
+        rrf_k = 60
+        scores: dict[str, float] = {}
+        chunks_index: dict[str, Chunk] = {h.chunk.id: h.chunk for h in fts_hits}
+
+        for rank, h in enumerate(fts_hits, start=1):
+            scores[h.chunk.id] = scores.get(h.chunk.id, 0.0) + fts_weight / (rrf_k + rank)
+        for rank, vh in enumerate(vec_hits, start=1):
+            if namespaces and vh.metadata.get("namespace") not in namespaces:
+                continue
+            scores[vh.id] = scores.get(vh.id, 0.0) + (1 - fts_weight) / (rrf_k + rank)
+            if vh.id not in chunks_index:
+                chunks_index[vh.id] = self._fetch_chunk(vh.id)
+
+        ordered = sorted(scores.items(), key=lambda x: x[1], reverse=True)
+        out: list[SearchHit] = []
+        for cid, score in ordered[:k]:
+            chunk = chunks_index.get(cid)
+            if chunk is None:
+                continue
+            anchor = self._guess_anchor_symbol(query, chunk.namespace)
+            out.append(
+                SearchHit(chunk=chunk, score=score, matched_symbol=anchor, source="hybrid"),
+            )
+        return out
+
+    def _fetch_chunk(self, chunk_id: str) -> Chunk:
+        with self._connect() as conn:
+            row = conn.execute(
+                "SELECT * FROM chunks WHERE id = ?", (chunk_id,)
+            ).fetchone()
+        if row is None:
+            raise ValueError(f"chunk 不存在：{chunk_id}")
+        return Chunk(
+            id=row["id"],
+            namespace=row["namespace"],
+            source_title=row["source_title"],
+            section=row["section"],
+            text=row["text"],
+            url=row["url"],
+        )
 
     @staticmethod
     def _row_to_symbol(r: sqlite3.Row) -> Symbol:

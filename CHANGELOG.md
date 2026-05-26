@@ -2,6 +2,106 @@
 
 所有重要的变更都记在这里。版本号遵守 [SemVer](https://semver.org/lang/zh-CN/)。
 
+## [0.3.0] — 2026-05-25
+
+**M3 全家桶**：jieba / 向量检索 / 爬虫 / 群英会 / ToolFactory 自动链路 /
+FastAPI 服务层 / Web 前端 / Tauri 桌面壳。一次会话推完。
+
+### Added · 检索增强
+
+- `core/knowledge/tokenize.py`：jieba 中文分词，写入与查询时都过一遍预处理。
+  解决了 0.2.0 之前 SQLite FTS5 unicode61 把整段中文当一个 token 的问题，
+  现在 `recall("可使用物品")` 能命中。
+- `core/knowledge/vector.py`：向量检索抽象层
+  - `Embedder` 协议 + `HashingEmbedder`（SHA-1 LSH，零依赖、确定性）
+  - `VectorStore` 协议 + `InMemoryVectorStore`（线性扫描，开发用）
+  - `LanceDBVectorStore` 占位（M4+ 接真包）
+- `SqliteKnowledgeStore.attach_vector_index(embedder, store)` 一行挂载混合检索
+- `SqliteKnowledgeStore.hybrid_search(query)`：FTS5 + 向量 RRF 融合
+
+### Added · 自动采集
+
+- `core/knowledge/crawler.py`：BFS 爬虫
+  - sitemap.xml 解析（含嵌套 sitemap index）
+  - 域名白名单 + 礼貌 rate limit + 增量 content-hash 跳过未变更
+  - 不引入 Scrapy，纯 httpx + asyncio
+- `core/tools/crawl.py`：`crawl_site` 工具，RiskTag.NET → 司辰阁 HITL
+
+### Added · 群英会
+
+- `core/ensemble/`：监督式多 Agent 协作
+  - `Role`：sub-agent 人格 + 工具白名单 + 模型偏好
+  - 三个内置角色：**researcher**（查文档/代码）/ **coder**（写代码）/
+    **reviewer**（审查方案，**只读不写**）
+  - `SubAgent`：受限 registry 的轻量 Conductor 包装，一次性任务
+  - `dispatch_subagent` / `list_roles` 工具：让玄玑通过工具调用召唤子智能体
+
+  **关键设计**：召唤 sub-agent 本身就是一次工具调用，不引入新调度机制——
+  audit / gate / 流式事件全部自动覆盖。
+
+### Added · ToolFactory 自动实现链路
+
+- `core/tools/tool_factory.py`：四步流水线
+  ```
+  propose_tool (玄玑) → drafts/<slug>.json
+  xuanji tool generate <slug>  ← LLM 把草案转 Python，落 staged/
+  xuanji tool test <slug>      ← subprocess 跑 pytest
+  xuanji tool publish <slug>   ← 通过测试后复制到 published/
+  ```
+  - **安全核心**：玄玑只能 `propose_tool`，generate/test/publish 都是 CLI 命令，
+    LLM 没法触发；即使 generate 出错也不会污染主 registry
+  - `FactoryRegistry`（SQLite）追踪每个 slug 的生命周期状态
+  - codegen 用统一的代码块协议（```python:tool` + ```python:test`），
+    解析失败抛 ValueError 不创建空文件
+
+### Added · 服务层
+
+- `core/server/`：FastAPI 服务（`uv run xuanji serve`）
+  - HTTP：`/healthz` / `/api/info` / `/api/profiles[/use/{name}]` /
+    `/api/knowledge/{stats,sources,search}` / `/api/memory/{stats,recall}`
+  - **WebSocket `/ws/chat`**：流式聊天 + 工具事件 + HITL 双向
+  - `WebSocketHITL`：把司辰阁的人工确认请求推到前端，等用户裁决
+- `ServerRuntime`：CLI 与 Web 共享同一注入路径，零行为差异
+
+### Added · Web 前端
+
+- `core/server/web.py` 内嵌单页 HTML
+  - 暗色主题，原生 WS 接 `/ws/chat`
+  - 流式渲染文本气泡 + 工具事件 + HITL 弹卡
+  - `GET /` 直接返回，桌面 Tauri 可直接 webview 加载
+- 不引入 Next.js / React 构建链——单页 HTML 已经够用
+
+### Added · Tauri 桌面壳
+
+- `apps/desktop/`：Tauri 2 配置（package.json / Cargo.toml / tauri.conf.json）
+  - `pnpm tauri dev` 启动时自动起 `uv run xuanji serve`
+  - webview 加载 `http://127.0.0.1:8765`
+  - 没装 Rust 也能用：直接 `xuanji serve` + 浏览器开同一 URL
+  - 完整 README 在 `apps/desktop/README.md`
+
+### CLI
+
+- 新增 `xuanji serve --host --port [--reload]`
+
+### Quality
+
+- ruff / mypy strict 全绿（65 个源文件 0 告警）
+- pytest **173 测试全过**（M3 新增 65 个：jieba 11 + vector 14 + crawler 9 + 
+  ensemble/factory 19 + server 13）
+- 工具总数 **23 个**（+ crawl_site / dispatch_subagent / list_roles）
+
+### Design highlights
+
+**为什么不真上 LanceDB**：依赖太重（含 PyArrow / Lance Rust binding），
+M3 阶段用零依赖的 InMemoryVectorStore + 协议化设计先把 hybrid search 跑通；
+M4+ 把实现换成 LanceDB 时调用方零改动。
+
+**为什么 sub-agent 不流式**：sub-agent 是一次性任务，结果作为工具输出
+回到主 Conductor 的 tool loop——主 conductor 才面向用户流式。
+M4+ 想要 sub-agent 流到前端时再补 stream() 实装。
+
+---
+
 ## [0.2.0] — 2026-05-25
 
 **自演化版本**。玄玑现在能在对话中主动补知识、写记忆、沉淀技能、提案新工具——

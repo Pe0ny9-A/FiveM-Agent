@@ -4,6 +4,10 @@
 - search 跨命名空间或单命名空间的混合召回；M1 用 FTS5，M2+ 接 LanceDB
 - lookup_symbol 精准匹配 Symbol 全限定名
 - 返回 SearchHit（统一壳），调用方拿 chunk + score 即可
+
+M3 增加：
+- attach_vector_index：可选的向量索引侧挂载
+- hybrid_search：FTS5 关键词 + 向量语义 RRF 融合
 """
 
 from __future__ import annotations
@@ -21,6 +25,7 @@ class SearchHit(BaseModel):
     chunk: Chunk
     score: float
     matched_symbol: Symbol | None = None
+    source: str = "fts"  # 'fts' | 'vector' | 'hybrid'
 
 
 class KnowledgeStore(Protocol):
