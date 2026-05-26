@@ -6,8 +6,8 @@ from pathlib import Path
 
 import pytest
 
-from core.capability.tool import ToolCtx, ToolError
-from core.fivem import (
+from xuanji.capability.tool import ToolCtx, ToolError
+from xuanji.fivem import (
     SCAFFOLD_PRESETS,
     FiveMContext,
     Framework,
@@ -17,10 +17,10 @@ from core.fivem import (
     detect_fivem_context,
     summarize_for_prompt,
 )
-from core.fivem.analyzer import analyze_resource
-from core.fivem.manifest import parse_fxmanifest
-from core.fivem.presets import ScaffoldFile, ScaffoldPreset
-from core.tools.fivem import (
+from xuanji.fivem.analyzer import analyze_resource
+from xuanji.fivem.manifest import parse_fxmanifest
+from xuanji.fivem.presets import ScaffoldFile, ScaffoldPreset
+from xuanji.tools.fivem import (
     AnalyzeResourceTool,
     DetectProjectTool,
     ProposePresetTool,

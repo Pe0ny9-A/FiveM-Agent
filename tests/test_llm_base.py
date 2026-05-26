@@ -7,8 +7,8 @@ from __future__ import annotations
 
 import pytest
 
-from core.llm import AssistantMessage, Delta, Message, TextBlock, ToolCallBlock, Usage
-from core.llm.providers.anthropic import _to_anthropic_messages
+from xuanji.llm import AssistantMessage, Delta, Message, TextBlock, ToolCallBlock, Usage
+from xuanji.llm.providers.anthropic import _to_anthropic_messages
 
 
 def test_message_str_content() -> None:

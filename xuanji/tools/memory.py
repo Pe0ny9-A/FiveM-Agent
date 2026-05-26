@@ -13,9 +13,9 @@ from __future__ import annotations
 
 from typing import Any, ClassVar
 
-from core.capability.tool import RiskTag, Tool, ToolCtx, ToolError, ToolResult
-from core.memory.models import Memory, MemoryKind, MemoryScope
-from core.memory.store.base import MemoryStore
+from xuanji.capability.tool import RiskTag, Tool, ToolCtx, ToolError, ToolResult
+from xuanji.memory.models import Memory, MemoryKind, MemoryScope
+from xuanji.memory.store.base import MemoryStore
 
 # 玄玑能写入的 scope（屏蔽 working 层，避免被模型当垃圾桶）
 _WRITABLE_SCOPES = {

@@ -91,7 +91,7 @@ class HashingEmbedder:
 
     def _tokenize(self, text: str) -> list[str]:
         # 先借 jieba 把中文切词，再按空格 + 单字母 token
-        from core.knowledge.tokenize import preprocess_text
+        from xuanji.knowledge.tokenize import preprocess_text
 
         return [t for t in preprocess_text(text.lower()).split() if t]
 
@@ -180,38 +180,113 @@ class InMemoryVectorStore:
 
 
 # ============================================================
-# LanceDB 占位（M4+ 实装）
+# LanceDB 实装：本地嵌入式向量库，零运维
 # ============================================================
 
 
 class LanceDBVectorStore:
-    """LanceDB 实现占位。M4+ 接真实 lancedb 包。
+    """LanceDB 实装。
 
-    设计点：
-    - 表 schema：(id TEXT, vector VECTOR<dim>, namespace TEXT, metadata JSON)
-    - 用 lance.dataset 的 ANN 索引（IVF_PQ / HNSW）做近似最近邻
-    - delete_namespace 走 SQL DELETE
-    - 单测里测 InMemoryVectorStore 即可，M4+ 加集成测试
+    使用嵌入式模式（无服务端进程），数据落盘到 `db_path` 目录。
+    schema: (id TEXT, vector FixedSizeList<float32, dim>, namespace TEXT, metadata JSON_TEXT)
 
-    现在的 stub 让 mypy / 文档可见结构，但调用会抛 NotImplementedError。
+    设计要点：
+    - 表延迟创建：第一次 upsert 才建表，避免空库就占用句柄
+    - upsert 语义：用 merge_insert 按 id 主键 upsert
+    - search 默认按 L2 距离，转 score = 1 / (1 + dist) 让"越大越相关"
+    - delete_namespace 走 SQL DELETE，O(命中行数)
+    - lancedb / pyarrow 是 optional 依赖（vector extra），import 延迟到首次实例化
     """
 
     name = "lancedb"
 
-    def __init__(self, db_path: str, table: str = "knowledge", dim: int = VECTOR_DIM) -> None:
+    def __init__(
+        self,
+        db_path: str,
+        table: str = "knowledge",
+        dim: int = VECTOR_DIM,
+    ) -> None:
+        try:
+            import lancedb  # noqa: F401
+            import pyarrow  # noqa: F401
+        except ImportError as e:
+            raise ImportError(
+                "LanceDBVectorStore 需要 vector extra：uv sync --extra vector",
+            ) from e
+
         self.dim = dim
         self._db_path = db_path
-        self._table = table
+        self._table_name = table
+        self._db: Any = None
+        self._table: Any = None
+
+    def _connect(self) -> Any:
+        if self._db is None:
+            import lancedb
+            self._db = lancedb.connect(self._db_path)
+        return self._db
+
+    def _schema(self) -> Any:
+        import pyarrow as pa
+        return pa.schema([
+            ("id", pa.string()),
+            ("vector", pa.list_(pa.float32(), self.dim)),
+            ("namespace", pa.string()),
+            ("metadata", pa.string()),
+        ])
+
+    def _ensure_table(self) -> Any:
+        if self._table is not None:
+            return self._table
+        db = self._connect()
+        try:
+            self._table = db.open_table(self._table_name)
+        except (FileNotFoundError, ValueError):
+            self._table = db.create_table(self._table_name, schema=self._schema())
+        return self._table
+
+    @staticmethod
+    def _meta_dump(metadata: dict[str, Any]) -> str:
+        import json
+        return json.dumps(metadata or {}, ensure_ascii=False)
+
+    @staticmethod
+    def _meta_load(text: str) -> dict[str, Any]:
+        import json
+        if not text:
+            return {}
+        try:
+            obj = json.loads(text)
+        except json.JSONDecodeError:
+            return {}
+        return obj if isinstance(obj, dict) else {}
 
     def upsert(
         self, id_: str, vector: list[float], metadata: dict[str, Any] | None = None
     ) -> None:
-        raise NotImplementedError("LanceDBVectorStore 在 M4+ 实装，当前用 InMemoryVectorStore")
+        if len(vector) != self.dim:
+            raise ValueError(f"向量维度不匹配：{len(vector)} != {self.dim}")
+        self.upsert_batch([(id_, vector, dict(metadata or {}))])
 
     def upsert_batch(
         self, items: list[tuple[str, list[float], dict[str, Any]]]
     ) -> None:
-        raise NotImplementedError
+        if not items:
+            return
+        for _, vec, _meta in items:
+            if len(vec) != self.dim:
+                raise ValueError(f"向量维度不匹配：{len(vec)} != {self.dim}")
+        table = self._ensure_table()
+        rows = [
+            {
+                "id": id_,
+                "vector": list(vec),
+                "namespace": str(meta.get("namespace") or ""),
+                "metadata": self._meta_dump(meta),
+            }
+            for id_, vec, meta in items
+        ]
+        table.merge_insert("id").when_matched_update_all().when_not_matched_insert_all().execute(rows)
 
     def search(
         self,
@@ -220,16 +295,39 @@ class LanceDBVectorStore:
         k: int = 8,
         filter_namespace: str | None = None,
     ) -> list[VectorHit]:
-        raise NotImplementedError
+        if len(vector) != self.dim:
+            raise ValueError(f"查询向量维度不匹配：{len(vector)} != {self.dim}")
+        table = self._ensure_table()
+        q = table.search(list(vector)).limit(k)
+        if filter_namespace is not None:
+            esc = filter_namespace.replace("'", "''")
+            q = q.where(f"namespace = '{esc}'")
+        rows = q.to_list()
+        hits: list[VectorHit] = []
+        for r in rows:
+            dist = float(r.get("_distance", 0.0))
+            score = 1.0 / (1.0 + dist)
+            meta = self._meta_load(r.get("metadata") or "")
+            hits.append(VectorHit(id_=r["id"], score=score, metadata=meta))
+        return hits
 
     def delete(self, id_: str) -> bool:
-        raise NotImplementedError
+        table = self._ensure_table()
+        before = int(table.count_rows())
+        esc = id_.replace("'", "''")
+        table.delete(f"id = '{esc}'")
+        return int(table.count_rows()) < before
 
     def delete_namespace(self, namespace: str) -> int:
-        raise NotImplementedError
+        table = self._ensure_table()
+        before = table.count_rows()
+        esc = namespace.replace("'", "''")
+        table.delete(f"namespace = '{esc}'")
+        return int(before - table.count_rows())
 
     def size(self) -> int:
-        raise NotImplementedError
+        table = self._ensure_table()
+        return int(table.count_rows())
 
 
 __all__ = [

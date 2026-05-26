@@ -14,9 +14,9 @@ from __future__ import annotations
 
 from typing import Any, ClassVar
 
-from core.capability.tool import RiskTag, Tool, ToolCtx, ToolError, ToolResult
-from core.memory.models import Memory, MemoryKind, MemoryScope
-from core.memory.store.base import MemoryStore
+from xuanji.capability.tool import RiskTag, Tool, ToolCtx, ToolError, ToolResult
+from xuanji.memory.models import Memory, MemoryKind, MemoryScope
+from xuanji.memory.store.base import MemoryStore
 
 SKILLS_NAMESPACE = "skills"
 """技能默认命名空间——跨项目通用。项目专属技能用 'skills.<project>'。"""

@@ -6,7 +6,7 @@ base_url 统一从 core.config.profiles.OFFICIAL_BASE_URLS 读取，
 
 from __future__ import annotations
 
-from core.config.profiles import (
+from xuanji.config.profiles import (
     OFFICIAL_BASE_URLS,
     AnthropicProfile,
     DeepSeekProfile,
@@ -15,9 +15,9 @@ from core.config.profiles import (
     Profile,
     ProfileKind,
 )
-from core.llm.providers.anthropic import AnthropicProvider
-from core.llm.providers.base import LLMProvider
-from core.llm.providers.openai import OpenAIProvider
+from xuanji.llm.providers.anthropic import AnthropicProvider
+from xuanji.llm.providers.base import LLMProvider
+from xuanji.llm.providers.openai import OpenAIProvider
 
 
 def build_provider(profile: Profile) -> LLMProvider:

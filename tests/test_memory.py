@@ -7,7 +7,7 @@ from pathlib import Path
 
 import pytest
 
-from core.memory import (
+from xuanji.memory import (
     Memory,
     MemoryKind,
     MemoryScope,
@@ -210,15 +210,15 @@ async def test_conductor_reflux_injects_memory(
     from collections.abc import AsyncIterator, Sequence
     from typing import Any
 
-    from core.config import DeepSeekProfile
-    from core.llm.providers.base import (
+    from xuanji.config import DeepSeekProfile
+    from xuanji.llm.providers.base import (
         AssistantMessage,
         Delta,
         LLMProvider,
         Message,
         ModelCapabilities,
     )
-    from core.neural import Conductor
+    from xuanji.neural import Conductor
 
     captured_systems: list[str] = []
 
@@ -242,7 +242,7 @@ async def test_conductor_reflux_injects_memory(
             yield Delta(type="message_done", stop_reason="end_turn")
 
     monkeypatch.setattr(
-        "core.neural.conductor.build_provider",
+        "xuanji.neural.conductor.build_provider",
         lambda _p: CapturingProvider(),
     )
 
@@ -280,14 +280,14 @@ async def test_conductor_no_memory_no_reflux(
     from collections.abc import AsyncIterator
     from typing import Any
 
-    from core.config import DeepSeekProfile
-    from core.llm.providers.base import (
+    from xuanji.config import DeepSeekProfile
+    from xuanji.llm.providers.base import (
         AssistantMessage,
         Delta,
         LLMProvider,
         ModelCapabilities,
     )
-    from core.neural import Conductor
+    from xuanji.neural import Conductor
 
     captured: list[str] = []
 
@@ -309,7 +309,7 @@ async def test_conductor_no_memory_no_reflux(
             captured.append(system or "")
             yield Delta(type="message_done", stop_reason="end_turn")
 
-    monkeypatch.setattr("core.neural.conductor.build_provider", lambda _p: P())
+    monkeypatch.setattr("xuanji.neural.conductor.build_provider", lambda _p: P())
     conductor = Conductor(
         profile=DeepSeekProfile(label="t", api_key="sk-x", default_model="deepseek-chat"),
         project_root=tmp_path,

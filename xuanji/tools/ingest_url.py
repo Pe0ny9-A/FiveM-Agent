@@ -15,9 +15,9 @@ from typing import Any, ClassVar
 
 import httpx
 
-from core.capability.tool import RiskTag, Tool, ToolCtx, ToolError, ToolResult
-from core.knowledge.store.base import KnowledgeStore
-from core.tools.ingest import _ingest_chunks
+from xuanji.capability.tool import RiskTag, Tool, ToolCtx, ToolError, ToolResult
+from xuanji.knowledge.store.base import KnowledgeStore
+from xuanji.tools.ingest import _ingest_chunks
 
 _TAG_RE = re.compile(r"<[^>]+>")
 _SCRIPT_RE = re.compile(r"<(script|style)[^>]*>.*?</\1>", re.DOTALL | re.IGNORECASE)

@@ -7,8 +7,8 @@ from pathlib import Path
 import httpx
 import pytest
 
-from core.knowledge import SqliteKnowledgeStore
-from core.knowledge.crawler import (
+from xuanji.knowledge import SqliteKnowledgeStore
+from xuanji.knowledge.crawler import (
     CrawlPlan,
     CrawlSession,
     _extract_links,
@@ -229,8 +229,8 @@ async def test_crawl_max_pages_limit(tmp_path: Path) -> None:
 
 @pytest.mark.asyncio
 async def test_crawl_site_tool_validates_url(tmp_path: Path) -> None:
-    from core.capability.tool import ToolCtx, ToolError
-    from core.tools.crawl import CrawlSiteTool
+    from xuanji.capability.tool import ToolCtx, ToolError
+    from xuanji.tools.crawl import CrawlSiteTool
 
     store = SqliteKnowledgeStore(tmp_path / "k.db")
     tool = CrawlSiteTool(store)
@@ -247,8 +247,8 @@ async def test_crawl_site_tool_validates_url(tmp_path: Path) -> None:
 @pytest.mark.asyncio
 async def test_crawl_site_tool_persists_cache(tmp_path: Path) -> None:
     """hash cache 持久化到磁盘，跨调用复用。"""
-    from core.capability.tool import ToolCtx
-    from core.tools.crawl import CrawlSiteTool
+    from xuanji.capability.tool import ToolCtx
+    from xuanji.tools.crawl import CrawlSiteTool
 
     page = "<html><head><title>T</title></head><body>cached content</body></html>"
 

@@ -6,11 +6,10 @@ from pathlib import Path
 
 import pytest
 
-from core.knowledge import (
+from xuanji.knowledge import (
     Chunk,
     HashingEmbedder,
     InMemoryVectorStore,
-    LanceDBVectorStore,
     SqliteKnowledgeStore,
 )
 
@@ -166,17 +165,3 @@ def test_search_hit_source_field(tmp_path: Path) -> None:
     )
     hits = store.search("alpha")
     assert hits[0].source == "fts"
-
-
-# ---------------- LanceDBVectorStore stub ----------------
-
-
-def test_lancedb_stub_raises_not_implemented(tmp_path: Path) -> None:
-    """M3 的 LanceDB 是 stub，调用应 NotImplementedError。"""
-    store = LanceDBVectorStore(db_path=str(tmp_path / "lance"))
-    with pytest.raises(NotImplementedError):
-        store.upsert("a", [0.0] * store.dim, {})
-    with pytest.raises(NotImplementedError):
-        store.search([0.0] * store.dim, k=1)
-    with pytest.raises(NotImplementedError):
-        store.size()

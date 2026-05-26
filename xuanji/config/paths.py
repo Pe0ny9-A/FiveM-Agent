@@ -95,3 +95,35 @@ def scaffold_drafts_dir() -> Path:
     p = data_dir() / "scaffold_drafts"
     p.mkdir(parents=True, exist_ok=True)
     return p
+
+
+def skills_dir() -> Path:
+    """Skills 目录：markdown + YAML frontmatter。
+
+    与 Claude Code / Codex 的 skills 目录格式互通——文件可双向迁移。
+    玄玑特定字段放在 frontmatter 的 `metadata.xuanji.*` 子树。
+    """
+    p = data_dir() / "skills"
+    p.mkdir(parents=True, exist_ok=True)
+    return p
+
+
+def hooks_dir() -> Path:
+    """Hooks 目录：YAML 配置。
+
+    事件名复用 Claude Code 体系：PreToolUse / PostToolUse /
+    UserPromptSubmit / Notification。文件名约定 `<event>.yaml`。
+    """
+    p = data_dir() / "hooks"
+    p.mkdir(parents=True, exist_ok=True)
+    return p
+
+
+def vector_db_path() -> Path:
+    """LanceDB 嵌入式数据目录。
+
+    LanceDBVectorStore 落盘到这里。InMemoryVectorStore 不会创建。
+    """
+    p = data_dir() / "vectors"
+    p.mkdir(parents=True, exist_ok=True)
+    return p

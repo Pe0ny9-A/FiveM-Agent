@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from collections.abc import Iterable
 
-from core.capability.tool import Tool
+from xuanji.capability.tool import Tool
 
 
 class ToolRegistry:

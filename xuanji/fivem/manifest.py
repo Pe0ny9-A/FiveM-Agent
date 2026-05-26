@@ -27,7 +27,7 @@ from __future__ import annotations
 import re
 from pathlib import Path
 
-from core.fivem.models import FxManifest
+from xuanji.fivem.models import FxManifest
 
 # 单值字段：fx_version 'X' / game "X"
 _SINGLE_VALUE = re.compile(

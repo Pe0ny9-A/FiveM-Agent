@@ -11,13 +11,13 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import HTMLResponse
 from pydantic import BaseModel
 
-from core import __version__
-from core.config import OpenAICompatibleProfile
-from core.gate.bridge import HITLBridge
-from core.gate.policy import VerdictKind
-from core.knowledge.models import Source
-from core.memory.models import MemoryKind, MemoryScope
-from core.server.runtime import ServerRuntime
+from xuanji import __version__
+from xuanji.config import OpenAICompatibleProfile
+from xuanji.gate.bridge import HITLBridge
+from xuanji.gate.policy import VerdictKind
+from xuanji.knowledge.models import Source
+from xuanji.memory.models import MemoryKind, MemoryScope
+from xuanji.server.runtime import ServerRuntime
 
 # ============================================================
 # WebSocket HITL bridge：把"待确认"事件推前端，等前端裁决
@@ -134,7 +134,7 @@ def create_app(runtime: ServerRuntime | None = None) -> FastAPI:
 
     @app.get("/", response_class=HTMLResponse)
     async def index() -> str:
-        from core.server.web import INDEX_HTML
+        from xuanji.server.web import INDEX_HTML
 
         return INDEX_HTML
 

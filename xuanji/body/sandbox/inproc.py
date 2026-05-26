@@ -6,7 +6,7 @@ import asyncio
 import time
 from typing import Any
 
-from core.capability.tool import Tool, ToolCtx, ToolError, ToolResult
+from xuanji.capability.tool import Tool, ToolCtx, ToolError, ToolResult
 
 
 class InProcSandbox:

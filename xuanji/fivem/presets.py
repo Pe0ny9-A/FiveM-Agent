@@ -17,7 +17,7 @@ from __future__ import annotations
 
 from pydantic import BaseModel, Field
 
-from core.fivem.models import Framework, InventoryKind, TargetKind
+from xuanji.fivem.models import Framework, InventoryKind, TargetKind
 
 
 class ScaffoldFile(BaseModel):

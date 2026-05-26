@@ -7,30 +7,30 @@ from pathlib import Path
 
 import pytest
 
-from core.capability.registry import ToolRegistry
-from core.capability.tool import RiskTag, ToolCtx, ToolError
-from core.knowledge.store.sqlite_fts import SqliteKnowledgeStore
-from core.memory.models import Memory, MemoryKind, MemoryScope
-from core.memory.store.sqlite import SqliteMemoryStore
-from core.tools import builtin_tools
-from core.tools.factory import ProposeToolTool
-from core.tools.ingest import (
+from xuanji.capability.registry import ToolRegistry
+from xuanji.capability.tool import RiskTag, ToolCtx, ToolError
+from xuanji.knowledge.store.sqlite_fts import SqliteKnowledgeStore
+from xuanji.memory.models import Memory, MemoryKind, MemoryScope
+from xuanji.memory.store.sqlite import SqliteMemoryStore
+from xuanji.tools import builtin_tools
+from xuanji.tools.factory import ProposeToolTool
+from xuanji.tools.ingest import (
     IngestFileTool,
     IngestTextTool,
     UpsertSymbolTool,
     ingest_tools_offline,
 )
-from core.tools.ingest_url import html_to_markdown
-from core.tools.knowledge import knowledge_tools
-from core.tools.memory import RecallMemoryTool, WriteMemoryTool
-from core.tools.meta import (
+from xuanji.tools.ingest_url import html_to_markdown
+from xuanji.tools.knowledge import knowledge_tools
+from xuanji.tools.memory import RecallMemoryTool, WriteMemoryTool
+from xuanji.tools.meta import (
     DescribeToolTool,
     ListSkillsTool,
     ListToolsTool,
     ReadSkillTool,
     meta_tools,
 )
-from core.tools.skills import (
+from xuanji.tools.skills import (
     SKILLS_NAMESPACE,
     RunSkillTool,
     SaveSkillTool,
@@ -436,13 +436,13 @@ def test_all_evolve_tools_register_without_conflict(
     kstore: SqliteKnowledgeStore, mstore: SqliteMemoryStore, tmp_path: Path,
 ) -> None:
     """复刻 chat loop 的注入顺序，确认没有名字冲突。"""
-    from core.tools import (
+    from xuanji.tools import (
         ingest_tools_offline,
         memory_tools,
         skill_tools,
         tool_factory_tools,
     )
-    from core.tools.ingest_url import IngestUrlTool
+    from xuanji.tools.ingest_url import IngestUrlTool
 
     registry = ToolRegistry()
     registry.register_all(builtin_tools())

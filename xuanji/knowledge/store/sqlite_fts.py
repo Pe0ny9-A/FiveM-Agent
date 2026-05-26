@@ -15,10 +15,10 @@ from contextlib import contextmanager
 from pathlib import Path
 from typing import Any
 
-from core.knowledge.models import Chunk, Namespace, Source, Symbol
-from core.knowledge.store.base import SearchHit
-from core.knowledge.tokenize import preprocess_text
-from core.knowledge.vector import Embedder, VectorStore
+from xuanji.knowledge.models import Chunk, Namespace, Source, Symbol
+from xuanji.knowledge.store.base import SearchHit
+from xuanji.knowledge.tokenize import preprocess_text
+from xuanji.knowledge.vector import Embedder, VectorStore
 
 _SCHEMA = """
 CREATE TABLE IF NOT EXISTS sources (
@@ -347,6 +347,23 @@ class SqliteKnowledgeStore:
                 "ORDER BY 1"
             ).fetchall()
         return [r[0] for r in rows]
+
+    def iter_chunks(self) -> Iterator[Chunk]:
+        """流式遍历全部 chunks，用于 reindex / migration。"""
+        with self._connect() as conn:
+            rows = conn.execute(
+                "SELECT id, namespace, source_title, section, text, url FROM chunks "
+                "ORDER BY namespace, source_title, id"
+            ).fetchall()
+        for r in rows:
+            yield Chunk(
+                id=r["id"],
+                namespace=r["namespace"],
+                source_title=r["source_title"],
+                section=r["section"],
+                text=r["text"],
+                url=r["url"],
+            )
 
     def stats(self) -> dict[str, Any]:
         with self._connect() as conn:

@@ -4,6 +4,6 @@ M0 阶段先实装 InProcSandbox（同进程执行 + 超时）。Subprocess / Do
 留到 M2+ 按 RiskTag 选档。
 """
 
-from core.body.sandbox import InProcSandbox, Sandbox
+from xuanji.body.sandbox import InProcSandbox, Sandbox
 
 __all__ = ["InProcSandbox", "Sandbox"]

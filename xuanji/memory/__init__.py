@@ -11,10 +11,10 @@ M2 阶段：
 切换不影响调用方。
 """
 
-from core.memory.models import Memory, MemoryKind, MemoryScope
-from core.memory.reflux import refluxed_fragment
-from core.memory.store.base import MemoryStore
-from core.memory.store.sqlite import SqliteMemoryStore
+from xuanji.memory.models import Memory, MemoryKind, MemoryScope
+from xuanji.memory.reflux import refluxed_fragment
+from xuanji.memory.store.base import MemoryStore
+from xuanji.memory.store.sqlite import SqliteMemoryStore
 
 __all__ = [
     "Memory",

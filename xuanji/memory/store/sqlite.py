@@ -18,8 +18,8 @@ from contextlib import contextmanager
 from pathlib import Path
 from typing import Any
 
-from core.knowledge.tokenize import preprocess_text
-from core.memory.models import Memory, MemoryKind, MemoryScope
+from xuanji.knowledge.tokenize import preprocess_text
+from xuanji.memory.models import Memory, MemoryKind, MemoryScope
 
 _SCHEMA = """
 CREATE TABLE IF NOT EXISTS memories (

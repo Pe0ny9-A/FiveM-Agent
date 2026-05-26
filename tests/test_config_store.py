@@ -6,7 +6,7 @@ from pathlib import Path
 
 import pytest
 
-from core.config import (
+from xuanji.config import (
     AnthropicProfile,
     ConfigStore,
     DeepSeekProfile,
@@ -15,7 +15,7 @@ from core.config import (
     ProfileKind,
     XuanjiConfig,
 )
-from core.persona.modes import PersonaTemperature
+from xuanji.persona.modes import PersonaTemperature
 
 
 @pytest.fixture

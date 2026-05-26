@@ -6,7 +6,7 @@ top-k 记忆拼成一段中性文本，作为 extra_fragments 传给 build_syste
 
 from __future__ import annotations
 
-from core.memory.models import Memory
+from xuanji.memory.models import Memory
 
 
 def refluxed_fragment(memories: list[Memory]) -> str | None:

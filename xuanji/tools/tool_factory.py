@@ -35,9 +35,9 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
-from core.config.profiles import Profile
-from core.llm.providers.base import Message
-from core.llm.providers.factory import build_provider
+from xuanji.config.profiles import Profile
+from xuanji.llm.providers.base import Message
+from xuanji.llm.providers.factory import build_provider
 
 
 @dataclass

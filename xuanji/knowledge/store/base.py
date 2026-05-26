@@ -16,7 +16,7 @@ from typing import Any, Protocol
 
 from pydantic import BaseModel
 
-from core.knowledge.models import Chunk, Namespace, Source, Symbol
+from xuanji.knowledge.models import Chunk, Namespace, Source, Symbol
 
 
 class SearchHit(BaseModel):

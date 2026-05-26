@@ -13,10 +13,10 @@ from __future__ import annotations
 
 from typing import Any, ClassVar
 
-from core.capability.registry import ToolRegistry
-from core.capability.tool import RiskTag, Tool, ToolCtx, ToolError, ToolResult
-from core.memory.models import MemoryKind, MemoryScope
-from core.memory.store.base import MemoryStore
+from xuanji.capability.registry import ToolRegistry
+from xuanji.capability.tool import RiskTag, Tool, ToolCtx, ToolError, ToolResult
+from xuanji.memory.models import MemoryKind, MemoryScope
+from xuanji.memory.store.base import MemoryStore
 
 
 class ListToolsTool(Tool):

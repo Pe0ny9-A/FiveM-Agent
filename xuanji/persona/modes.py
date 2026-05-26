@@ -13,7 +13,7 @@ from __future__ import annotations
 
 from enum import StrEnum
 
-from core.persona.xuanji import XUANJI_CORE_PROMPT, XUANJI_GUARDRAILS
+from xuanji.persona.xuanji import XUANJI_CORE_PROMPT, XUANJI_GUARDRAILS
 
 DEFAULT_ASSISTANT_ALIAS = "姐姐"
 DEFAULT_USER_ALIAS = "小宝"

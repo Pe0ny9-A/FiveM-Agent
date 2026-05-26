@@ -6,10 +6,10 @@ from pathlib import Path
 
 import pytest
 
-from core.capability.tool import ToolCtx
-from core.knowledge import Chunk, Source, SqliteKnowledgeStore, Symbol
-from core.knowledge.sources import seed_chunks, seed_sources, seed_symbols
-from core.tools.knowledge import KnowledgeSearchTool, LookupSymbolTool
+from xuanji.capability.tool import ToolCtx
+from xuanji.knowledge import Chunk, Source, SqliteKnowledgeStore, Symbol
+from xuanji.knowledge.sources import seed_chunks, seed_sources, seed_symbols
+from xuanji.tools.knowledge import KnowledgeSearchTool, LookupSymbolTool
 
 
 @pytest.fixture
@@ -249,7 +249,7 @@ async def test_knowledge_search_empty_query_errors(
     store: SqliteKnowledgeStore, ctx: ToolCtx,
 ) -> None:
     """空 query 应抛 ToolError。"""
-    from core.capability.tool import ToolError
+    from xuanji.capability.tool import ToolError
 
     tool = KnowledgeSearchTool(store)
     with pytest.raises(ToolError, match="不能为空"):

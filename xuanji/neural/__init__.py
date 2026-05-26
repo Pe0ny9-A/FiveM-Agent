@@ -12,7 +12,7 @@ M1+ 演进：
 - Rollback: 基于 Audit 回放
 """
 
-from core.neural.audit import AuditEvent, AuditLog
-from core.neural.conductor import Conductor, SessionCtx
+from xuanji.neural.audit import AuditEvent, AuditLog
+from xuanji.neural.conductor import Conductor, SessionCtx
 
 __all__ = ["AuditEvent", "AuditLog", "Conductor", "SessionCtx"]

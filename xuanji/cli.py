@@ -1,7 +1,10 @@
 """玄玑 CLI。
 
 命令族：
+- xuanji version        版本与运行环境
 - xuanji info           当前激活配置概览
+- xuanji init           首次使用向导（交互式配置 + 种子导入）
+- xuanji doctor         自检：环境 / 配置 / 数据库 / profile 可用性
 - xuanji config path    显示配置文件路径
 - xuanji config list    列出所有 profile
 - xuanji config show    查看某个 profile 详情（密钥脱敏）
@@ -10,6 +13,8 @@
 - xuanji config remove  删除 profile
 - xuanji config test    实际请求一条 hello 验证 profile 可用
 - xuanji chat           进入流式对话（CHAT 模式）
+- xuanji serve          启动 FastAPI 服务（HTTP + WebSocket）
+- xuanji ipc            启动 stdio JSON-RPC 后端（VS Code / 桌面端用）
 """
 
 from __future__ import annotations
@@ -36,8 +41,8 @@ from rich.panel import Panel
 from rich.table import Table
 from rich.text import Text
 
-from core.capability.tool import Tool
-from core.config import (
+from xuanji.capability.tool import Tool
+from xuanji.config import (
     AnthropicProfile,
     ConfigStore,
     DeepSeekProfile,
@@ -52,13 +57,13 @@ from core.config import (
     scaffold_presets_dir,
     tool_drafts_dir,
 )
-from core.config.profiles import DEFAULT_MODELS, OFFICIAL_BASE_URLS
-from core.fivem.scaffold import ScaffoldEngine
-from core.gate.bridge import HITLBridge
-from core.knowledge import SqliteKnowledgeStore
-from core.knowledge.sources import seed_chunks, seed_sources, seed_symbols
-from core.llm.providers.factory import build_provider
-from core.memory import Memory, MemoryKind, MemoryScope, SqliteMemoryStore
+from xuanji.config.profiles import DEFAULT_MODELS, OFFICIAL_BASE_URLS
+from xuanji.fivem.scaffold import ScaffoldEngine
+from xuanji.gate.bridge import HITLBridge
+from xuanji.knowledge import SqliteKnowledgeStore
+from xuanji.knowledge.sources import seed_chunks, seed_sources, seed_symbols
+from xuanji.llm.providers.factory import build_provider
+from xuanji.memory import Memory, MemoryKind, MemoryScope, SqliteMemoryStore
 
 app = typer.Typer(
     add_completion=False,
@@ -79,6 +84,14 @@ skill_app = typer.Typer(
     help="技能：玄玑学到的可复用做事套路（procedural memory 薄壳）",
     no_args_is_help=True,
 )
+skill_file_app = typer.Typer(
+    help="Skills 文件：markdown + frontmatter，与 Claude Code / Codex 互通",
+    no_args_is_help=True,
+)
+hook_app = typer.Typer(
+    help="Hooks：YAML + Pre/PostToolUse / UserPromptSubmit / Notification",
+    no_args_is_help=True,
+)
 tool_app = typer.Typer(
     help="工具：列出已注册工具 / 查看 propose_tool 草案",
     no_args_is_help=True,
@@ -87,6 +100,8 @@ app.add_typer(config_app, name="config")
 app.add_typer(knowledge_app, name="knowledge")
 app.add_typer(memory_app, name="memory")
 app.add_typer(skill_app, name="skill")
+app.add_typer(skill_file_app, name="skill-file")
+app.add_typer(hook_app, name="hook")
 app.add_typer(tool_app, name="tool")
 
 fivem_app = typer.Typer(
@@ -120,6 +135,26 @@ def _profile_summary(p: Profile) -> str:
     return base
 
 
+# ---------- version ----------
+
+
+@app.command()
+def version() -> None:
+    """显示玄玑版本与运行环境。"""
+    import platform
+
+    from xuanji import __version__
+
+    table = Table(show_header=False, box=None, padding=(0, 2))
+    table.add_column(style="cyan")
+    table.add_column()
+    table.add_row("xuanji", __version__)
+    table.add_row("python", f"{platform.python_version()} ({sys.executable})")
+    table.add_row("platform", f"{platform.system()} {platform.release()}")
+    table.add_row("config_dir", str(config_file_path().parent))
+    console.print(table)
+
+
 # ---------- info ----------
 
 
@@ -144,6 +179,221 @@ def info() -> None:
         if isinstance(active, OpenAICompatibleProfile):
             table.add_row("active.base_url", str(active.base_url))
     console.print(table)
+
+
+# ---------- init ----------
+
+
+def _do_init(
+    profile_name: str,
+    kind: ProfileKind,
+    api_key: str,
+    base_url: str | None,
+    seed_knowledge: bool,
+    skip_test: bool,
+) -> None:
+    """init 命令的纯函数核心，便于单测。"""
+    common = {
+        "label": profile_name,
+        "api_key": api_key,
+        "default_model": DEFAULT_MODELS[kind],
+    }
+    profile: Profile
+    if kind == ProfileKind.ANTHROPIC:
+        profile = AnthropicProfile(**common)
+    elif kind == ProfileKind.OPENAI:
+        profile = OpenAIProfile(**common)
+    elif kind == ProfileKind.DEEPSEEK:
+        profile = DeepSeekProfile(**common)
+    elif kind == ProfileKind.OPENAI_COMPATIBLE:
+        if not base_url:
+            console.print("[red]openai-compatible 必须提供 base_url[/red]")
+            raise typer.Exit(1)
+        profile = OpenAICompatibleProfile(base_url=base_url, **common)
+
+    ConfigStore().upsert_profile(profile_name, profile, activate=True)
+    console.print(f"[green]✓ profile [bold]{profile_name}[/bold] 已保存并激活[/green]")
+
+    if seed_knowledge:
+        store = _open_knowledge_store()
+        sources = seed_sources()
+        symbols = seed_symbols()
+        chunks = seed_chunks()
+        for src in sources:
+            store.upsert_source(src)
+        store.upsert_symbols(symbols)
+        store.upsert_chunks(chunks)
+        console.print(
+            f"[green]✓ 种子已导入：{len(sources)} sources / "
+            f"{len(symbols)} symbols / {len(chunks)} chunks[/green]"
+        )
+
+    if not skip_test:
+        try:
+            asyncio.run(_test_profile(profile_name))
+        except typer.Exit:
+            console.print(
+                "[yellow]测试未通过——profile 已保存，"
+                "等小宝补完 API Key 再 [bold]xuanji config test[/bold] 验一次。[/yellow]"
+            )
+
+
+@app.command()
+def init(
+    name: str = typer.Option(
+        "default", "--name", "-n", help="profile 名（短标识）"
+    ),
+    kind: ProfileKind = typer.Option(
+        ProfileKind.ANTHROPIC, "--kind", "-k",
+        help="provider 种类（anthropic/openai/deepseek/openai-compatible）",
+    ),
+    api_key: str = typer.Option(
+        ..., "--api-key", prompt="API Key", hide_input=True,
+    ),
+    base_url: str = typer.Option(
+        None, "--base-url", "-u",
+        help="openai-compatible 必填",
+    ),
+    seed_knowledge: bool = typer.Option(
+        True, "--seed/--no-seed",
+        help="是否导入 FiveM 种子知识（QBCore/ox_lib/...）",
+    ),
+    skip_test: bool = typer.Option(
+        False, "--skip-test",
+        help="跳过 profile 实际请求测试",
+    ),
+) -> None:
+    """首次使用向导：建 profile + 导入种子 + 测试连接。"""
+    console.print(
+        Panel(
+            "玄玑首次使用向导\n"
+            "建一个默认 profile、导入 FiveM 种子知识、做一次连通性测试。\n"
+            "[dim]全部步骤完成后，xuanji chat 就能直接用了。[/dim]",
+            border_style="magenta",
+            title="[magenta]玄玑 init[/magenta]",
+        )
+    )
+    _do_init(name, kind, api_key, base_url, seed_knowledge, skip_test)
+    console.print(
+        "[green]姐姐这边都准备好了。[/green]\n"
+        "[dim]下一步：[bold]xuanji chat[/bold] 进入对话，"
+        "或 [bold]xuanji doctor[/bold] 再做一次环境自检。[/dim]"
+    )
+
+
+# ---------- doctor ----------
+
+
+def _doctor_checks() -> list[tuple[str, bool, str]]:
+    """返回 (项目, 通过?, 详情) 列表。纯函数，便于单测。"""
+    import importlib
+    import platform
+
+    checks: list[tuple[str, bool, str]] = []
+
+    # 1. Python 版本
+    py = platform.python_version_tuple()
+    py_ok = (int(py[0]), int(py[1])) >= (3, 12)
+    checks.append((
+        "python>=3.12",
+        py_ok,
+        f"{platform.python_version()}",
+    ))
+
+    # 2. 关键依赖
+    for mod in ["typer", "rich", "pydantic", "anthropic", "openai", "httpx", "jieba"]:
+        try:
+            importlib.import_module(mod)
+            checks.append((f"import {mod}", True, "ok"))
+        except ImportError as e:
+            checks.append((f"import {mod}", False, str(e)))
+
+    # 3. 配置文件
+    cfg_path = config_file_path()
+    if cfg_path.exists():
+        try:
+            cfg = ConfigStore().load()
+            checks.append((
+                "config.json",
+                True,
+                f"{cfg_path}（{len(cfg.profiles)} profile / "
+                f"active={cfg.active_profile or '未设置'}）",
+            ))
+            # 4. 至少一个激活 profile
+            if cfg.get_active():
+                checks.append(("active profile", True, cfg.active_profile or ""))
+            else:
+                checks.append((
+                    "active profile",
+                    False,
+                    "未设置——跑 [bold]xuanji init[/bold] 或 [bold]xuanji config add[/bold]",
+                ))
+        except ValueError as e:
+            checks.append(("config.json", False, str(e)))
+    else:
+        checks.append((
+            "config.json",
+            False,
+            "不存在——跑 [bold]xuanji init[/bold] 创建",
+        ))
+        checks.append(("active profile", False, "（未配置）"))
+
+    # 5. 数据目录可写
+    try:
+        from xuanji.config import data_dir
+
+        d = data_dir()
+        probe = d / ".doctor_probe"
+        probe.write_text("ok", encoding="utf-8")
+        probe.unlink()
+        checks.append(("data dir writable", True, str(d)))
+    except OSError as e:
+        checks.append(("data dir writable", False, str(e)))
+
+    # 6. 知识库
+    try:
+        store = _open_knowledge_store()
+        s = store.stats()
+        n_chunks = int(s["chunks"])
+        n_sources = int(s["sources"])
+        if n_chunks == 0:
+            checks.append((
+                "knowledge db",
+                False,
+                "空——跑 [bold]xuanji knowledge ingest[/bold] 导种子",
+            ))
+        else:
+            checks.append((
+                "knowledge db",
+                True,
+                f"{n_sources} sources / {n_chunks} chunks",
+            ))
+    except (OSError, RuntimeError) as e:
+        checks.append(("knowledge db", False, str(e)))
+
+    return checks
+
+
+@app.command()
+def doctor() -> None:
+    """环境自检：Python/依赖/配置/数据库/profile。"""
+    checks = _doctor_checks()
+    table = Table(title="玄玑 · 环境自检", show_lines=False)
+    table.add_column("项目", style="cyan", no_wrap=True)
+    table.add_column("结果", justify="center")
+    table.add_column("详情", overflow="fold")
+    fail = 0
+    for name, ok, detail in checks:
+        mark = "[green]✓[/green]" if ok else "[red]✗[/red]"
+        table.add_row(name, mark, detail)
+        if not ok:
+            fail += 1
+    console.print(table)
+    if fail == 0:
+        console.print("[green]全部通过——姐姐这儿一切正常。[/green]")
+    else:
+        console.print(f"[yellow]{fail} 项需要小宝处理一下。[/yellow]")
+        raise typer.Exit(1)
 
 
 # ---------- config path ----------
@@ -352,7 +602,7 @@ async def _test_profile(name: str | None = None) -> None:
         f"[cyan]正在用 [bold]{profile_name}[/bold]"
         f"（{profile.kind.value} · {profile.default_model}）发一条测试请求……[/cyan]"
     )
-    from core.llm.providers.base import Message
+    from xuanji.llm.providers.base import Message
 
     provider = build_provider(profile)
     try:
@@ -384,6 +634,144 @@ def config_test(
 ) -> None:
     """实际请求一次，验证 profile 可用。"""
     asyncio.run(_test_profile(name))
+
+
+# ---------- config mcp ----------
+
+mcp_app = typer.Typer(
+    help="MCP server：收编外部工具（spec 兼容 Claude Code / Codex）",
+    no_args_is_help=True,
+)
+config_app.add_typer(mcp_app, name="mcp")
+
+
+@mcp_app.command("list")
+def config_mcp_list() -> None:
+    """列出所有 MCP server 配置。"""
+    cfg = ConfigStore().load()
+    if not cfg.mcp_servers:
+        console.print("[yellow]还没有配 MCP server。[/yellow]")
+        console.print(
+            "用 [bold]xuanji config mcp add --name X --command Y --args ...[/bold] 加一个。"
+        )
+        return
+    table = Table(title="MCP servers")
+    table.add_column("名称", style="cyan", no_wrap=True)
+    table.add_column("transport")
+    table.add_column("命令 / URL", overflow="fold")
+    table.add_column("状态")
+    for s in cfg.mcp_servers:
+        cmd_text = s.command or s.url or "-"
+        if s.args:
+            cmd_text = f"{cmd_text} {' '.join(s.args)}"
+        status = "[green]on[/green]" if s.enabled else "[dim]off[/dim]"
+        table.add_row(s.name, s.transport, cmd_text, status)
+    console.print(table)
+
+
+@mcp_app.command("add")
+def config_mcp_add(
+    name: str = typer.Option(..., "--name", help="server 显式名（工具前缀）"),
+    command: str = typer.Option(None, "--command", help="stdio 模式下的可执行文件"),
+    args: list[str] = typer.Option(
+        None, "--arg", "-a",
+        help="传给 command 的参数，可重复多次：-a foo -a bar",
+    ),
+    url: str = typer.Option(None, "--url", help="http+sse 模式的 server URL"),
+    cwd: str = typer.Option(None, "--cwd", help="子进程工作目录"),
+    description: str = typer.Option("", "--description"),
+    enabled: bool = typer.Option(True, "--enabled/--disabled"),
+) -> None:
+    """新增（或按名覆盖）一个 MCP server 配置。"""
+    from xuanji.mcp.registry import McpServerConfig
+
+    if not command and not url:
+        console.print("[red]必须给 --command 或 --url 之一[/red]")
+        raise typer.Exit(1)
+    transport = "stdio" if command else "http+sse"
+    server = McpServerConfig(
+        name=name,
+        transport=transport,
+        command=command,
+        args=list(args or []),
+        cwd=cwd,
+        url=url,
+        description=description,
+        enabled=enabled,
+    )
+    ConfigStore().upsert_mcp_server(server)
+    console.print(f"[green]已保存 MCP server[/green] [bold]{name}[/bold]")
+
+
+@mcp_app.command("remove")
+def config_mcp_remove(
+    name: str = typer.Argument(..., help="要删除的 server 名"),
+) -> None:
+    """删除一个 MCP server 配置。"""
+    if ConfigStore().remove_mcp_server(name):
+        console.print(f"[green]已删除[/green] {name}")
+    else:
+        console.print(f"[yellow]未找到 server：{name}[/yellow]")
+        raise typer.Exit(1)
+
+
+@mcp_app.command("enable")
+def config_mcp_enable(name: str) -> None:
+    """启用一个 MCP server。"""
+    if ConfigStore().set_mcp_enabled(name, True):
+        console.print(f"[green]已启用[/green] {name}")
+    else:
+        raise typer.Exit(1)
+
+
+@mcp_app.command("disable")
+def config_mcp_disable(name: str) -> None:
+    """暂停一个 MCP server（保留配置但不连）。"""
+    if ConfigStore().set_mcp_enabled(name, False):
+        console.print(f"[yellow]已停用[/yellow] {name}")
+    else:
+        raise typer.Exit(1)
+
+
+@mcp_app.command("test")
+def config_mcp_test(
+    name: str = typer.Argument(..., help="要试连的 server 名"),
+) -> None:
+    """实际拉起一次 server，跑 initialize + tools/list 验证连通。"""
+    from xuanji.mcp.registry import McpClientRegistry
+
+    cfg = ConfigStore().load()
+    found = next((s for s in cfg.mcp_servers if s.name == name), None)
+    if found is None:
+        console.print(f"[red]没找到 server：{name}[/red]")
+        raise typer.Exit(1)
+
+    async def _run() -> None:
+        reg = McpClientRegistry([found])
+        await reg.connect_all()
+        handle = reg.handles.get(name)
+        try:
+            if handle is None or handle.error:
+                msg = handle.error if handle else "未知错误"
+                console.print(f"[red]连接失败[/red]：{msg}")
+                raise typer.Exit(1)
+            console.print(
+                Panel(
+                    f"[green]通过[/green]\n"
+                    f"server: {handle.client.server_info.serverInfo.name if handle.client.server_info else '?'}"
+                    f"\ntools: {len(handle.tools)}",
+                    title=f"MCP · {name}",
+                    border_style="green",
+                )
+            )
+            for t in handle.tools[:10]:
+                console.print(f"  • [cyan]{t.name}[/cyan]  {t.description[:60]}")
+            if len(handle.tools) > 10:
+                console.print(f"  [dim]…还有 {len(handle.tools) - 10} 个[/dim]")
+        finally:
+            await reg.close_all()
+
+    asyncio.run(_run())
 
 
 # ---------- knowledge ----------
@@ -549,6 +937,64 @@ def knowledge_clear(
     store = _open_knowledge_store()
     n = store.clear_namespace(namespace)
     console.print(f"[green]已清空 {namespace}（{n} chunks）[/green]")
+
+
+@knowledge_app.command("reindex-vectors")
+def knowledge_reindex_vectors(
+    backend: str = typer.Option(
+        "lancedb",
+        "--backend",
+        help="目标向量后端：lancedb / inmemory（仅做演练）",
+    ),
+    batch: int = typer.Option(128, "--batch", help="批写入大小"),
+) -> None:
+    """把 SQLite 里的全部 chunks 重新 embed 写入指定向量后端。
+
+    切换 InMemory ↔ LanceDB 后跑这个命令把历史 chunks 一次性灌进新存储。
+    LanceDB 落盘到 vector_db_path()。
+    """
+    from xuanji.config import vector_db_path
+    from xuanji.knowledge.vector import HashingEmbedder, InMemoryVectorStore, LanceDBVectorStore
+
+    store = _open_knowledge_store()
+    embedder = HashingEmbedder()
+    if backend.lower() == "lancedb":
+        try:
+            vstore = LanceDBVectorStore(str(vector_db_path()), dim=embedder.dim)
+        except ImportError:
+            console.print(
+                "[red]lancedb / pyarrow 未安装。先 [bold]uv sync --extra vector[/bold]。[/red]",
+            )
+            raise typer.Exit(2) from None
+        target_path: str = str(vector_db_path())
+    elif backend.lower() == "inmemory":
+        vstore = InMemoryVectorStore(dim=embedder.dim)  # type: ignore[assignment]
+        target_path = "(memory)"
+    else:
+        console.print(f"[red]未知 backend：{backend}[/red]")
+        raise typer.Exit(2)
+
+    total = 0
+    pending: list[tuple[str, list[float], dict[str, Any]]] = []
+    for chunk in store.iter_chunks():
+        vec = embedder.embed(chunk.text)
+        pending.append(
+            (chunk.id, vec, {"namespace": chunk.namespace, "source_title": chunk.source_title}),
+        )
+        if len(pending) >= batch:
+            vstore.upsert_batch(pending)
+            total += len(pending)
+            pending.clear()
+    if pending:
+        vstore.upsert_batch(pending)
+        total += len(pending)
+    console.print(
+        f"[green]reindex 完成：{total} chunks → {backend}（{target_path}）[/green]",
+    )
+    if backend.lower() == "lancedb":
+        console.print(
+            "[dim]启动玄玑前 set XUANJI_VECTOR_BACKEND=lancedb 才会用上这份索引。[/dim]",
+        )
 
 
 # ---------- memory ----------
@@ -751,7 +1197,7 @@ def skill_list(
     limit: int = typer.Option(50, "--limit", help="最大返回数"),
 ) -> None:
     """列出技能。"""
-    from core.tools.skills import SKILLS_NAMESPACE
+    from xuanji.tools.skills import SKILLS_NAMESPACE
 
     store = _open_memory_store()
     items = store.list_by_namespace(
@@ -783,7 +1229,7 @@ def skill_list(
 @skill_app.command("show")
 def skill_show(id_: str = typer.Argument(..., help="技能 id 前缀（≥6 位）或全名")) -> None:
     """显示一个技能的完整正文。"""
-    from core.tools.skills import SKILLS_NAMESPACE
+    from xuanji.tools.skills import SKILLS_NAMESPACE
 
     store = _open_memory_store()
     m = store.get(id_)
@@ -852,7 +1298,7 @@ def skill_forget(
     force: bool = typer.Option(False, "--force", "-f"),
 ) -> None:
     """删除一个技能。"""
-    from core.tools.skills import SKILLS_NAMESPACE
+    from xuanji.tools.skills import SKILLS_NAMESPACE
 
     store = _open_memory_store()
     target = store.get(id_)
@@ -932,7 +1378,7 @@ def tool_drafts(
 @tool_app.command("list")
 def tool_list_cmd() -> None:
     """列出当前会话注入的所有工具（演示性，与 chat 启动时的 registry 一致）。"""
-    from core.server.runtime import ServerRuntime
+    from xuanji.server.runtime import ServerRuntime
 
     runtime = ServerRuntime()
     registry = runtime.build_registry()
@@ -961,7 +1407,7 @@ def fivem_detect(
     path: str = typer.Argument(".", help="目标目录，默认当前 cwd"),
 ) -> None:
     """识别一个目录是不是 FiveM resource，推断 framework / inventory / target。"""
-    from core.fivem import detect_fivem_context, summarize_for_prompt
+    from xuanji.fivem import detect_fivem_context, summarize_for_prompt
 
     p = Path(path).resolve()
     if not p.exists():
@@ -1067,7 +1513,7 @@ def fivem_analyze(
     path: str = typer.Argument(".", help="resource 路径，默认当前 cwd"),
 ) -> None:
     """分析一个 resource，列出 exports / events / API 调用频率。"""
-    from core.fivem.analyzer import analyze_resource
+    from xuanji.fivem.analyzer import analyze_resource
 
     p = Path(path).resolve()
     if not p.exists():
@@ -1117,7 +1563,7 @@ def preset_list() -> None:
     engine = _open_scaffold_engine()
     drafts = engine.list_drafts()
     if not drafts:
-        from core.config import scaffold_drafts_dir
+        from xuanji.config import scaffold_drafts_dir
 
         console.print(
             f"[yellow]暂无草案。玄玑通过 [bold]propose_preset[/bold] 提交后会出现在这里："
@@ -1307,7 +1753,7 @@ def _render_tool_event(delta) -> None:  # type: ignore[no-untyped-def]
 
 
 async def _chat_loop() -> None:
-    from core.server.runtime import ServerRuntime
+    from xuanji.server.runtime import ServerRuntime
 
     cfg = ConfigStore().load()
     profile = cfg.get_active()
@@ -1422,7 +1868,7 @@ def serve(
     """
     import uvicorn
 
-    from core.server.app import create_app
+    from xuanji.server.app import create_app
 
     cfg = ConfigStore().load()
     if cfg.get_active() is None:
@@ -1434,7 +1880,7 @@ def serve(
     if reload:
         # reload 模式只能传 import string
         uvicorn.run(
-            "core.server.app:create_app",
+            "xuanji.server.app:create_app",
             host=host,
             port=port,
             factory=True,
@@ -1443,6 +1889,364 @@ def serve(
     else:
         app_instance = create_app()
         uvicorn.run(app_instance, host=host, port=port)
+
+
+# ---------- skill-file（markdown + frontmatter，与 Claude Code / Codex 互通）----------
+
+
+@skill_file_app.command("list")
+def skill_file_list() -> None:
+    """列出 skills 目录下所有 markdown skill。"""
+    from xuanji.config import skills_dir
+    from xuanji.skills import SkillsLoader
+
+    loader = SkillsLoader(skills_dir())
+    skills = loader.all()
+    errors = loader.errors()
+    if not skills and not errors:
+        console.print(
+            f"[yellow]{skills_dir()} 下还没有 skill 文件。"
+            "可以从 Claude Code / Codex 拷过来，或手动写一个 .md。[/yellow]",
+        )
+        return
+    table = Table(title=f"Skills · {skills_dir()}")
+    table.add_column("name", style="cyan")
+    table.add_column("description", overflow="fold")
+    table.add_column("triggers", style="green", overflow="fold")
+    table.add_column("xuanji.mode", style="magenta")
+    for s in skills:
+        table.add_row(
+            s.name,
+            s.frontmatter.description,
+            ", ".join(s.frontmatter.triggers) or "-",
+            s.frontmatter.xuanji.mode or "-",
+        )
+    console.print(table)
+    if errors:
+        console.print("[red]解析失败：[/red]")
+        for path, msg in errors.items():
+            console.print(f"  - {path}: {msg}")
+
+
+@skill_file_app.command("show")
+def skill_file_show(name: str = typer.Argument(..., help="skill 名（frontmatter.name）")) -> None:
+    """显示一个 skill 的 frontmatter 与正文。"""
+    from xuanji.config import skills_dir
+    from xuanji.skills import SkillsLoader
+
+    loader = SkillsLoader(skills_dir())
+    skill = loader.get(name)
+    if skill is None:
+        console.print(f"[red]找不到 skill：{name}[/red]")
+        raise typer.Exit(code=1)
+    console.print(f"[bold cyan]{skill.name}[/bold cyan] · {skill.path}")
+    console.print(f"[dim]{skill.frontmatter.description}[/dim]")
+    if skill.frontmatter.triggers:
+        console.print(f"triggers: {', '.join(skill.frontmatter.triggers)}")
+    if skill.frontmatter.allowed_tools:
+        console.print(f"allowed_tools: {', '.join(skill.frontmatter.allowed_tools)}")
+    xj = skill.frontmatter.xuanji
+    if xj.mode or xj.role_hint or xj.risk_floor or xj.temperature:
+        console.print(
+            f"xuanji: mode={xj.mode} temperature={xj.temperature} "
+            f"role_hint={xj.role_hint} risk_floor={xj.risk_floor}",
+        )
+    console.print()
+    console.print(skill.body)
+
+
+@skill_file_app.command("path")
+def skill_file_path() -> None:
+    """打印 skills 目录路径。"""
+    from xuanji.config import skills_dir
+    console.print(str(skills_dir()))
+
+
+@skill_file_app.command("install-samples")
+def skill_file_install_samples(
+    force: bool = typer.Option(
+        False, "--force", "-f", help="覆盖同名文件（默认遇到同名跳过）",
+    ),
+) -> None:
+    """把内置示范 skill 拷到 skills_dir()，立即可用。
+
+    内置示范：
+    - qbox-add-useable-item.md
+    - ox-lib-callback.md
+    - fxmanifest-audit.md
+    """
+    import shutil
+
+    from xuanji.config import skills_dir
+    from xuanji.resources import list_sample_skills
+
+    target = skills_dir()
+    samples = list_sample_skills()
+    if not samples:
+        console.print("[yellow]没找到内置示范 skill（resources/skills 为空）[/yellow]")
+        return
+    installed: list[str] = []
+    skipped: list[str] = []
+    for src in samples:
+        dst = target / src.name
+        if dst.exists() and not force:
+            skipped.append(src.name)
+            continue
+        shutil.copy2(src, dst)
+        installed.append(src.name)
+    for name in installed:
+        console.print(f"[green]✔[/green] {name}")
+    for name in skipped:
+        console.print(f"[dim]·[/dim] {name}（已存在，跳过；--force 覆盖）")
+    console.print(f"[bold]目标目录：[/bold]{target}")
+
+
+# ---------- hook（YAML + Pre/PostToolUse / UserPromptSubmit / Notification）----------
+
+
+_HOOK_EVENT_NAMES = ["PreToolUse", "PostToolUse", "UserPromptSubmit", "Notification"]
+
+
+def _resolve_hook_event(name: str) -> Any:
+    from xuanji.hooks import HookEvent
+    for ev in HookEvent:
+        if ev.value.lower() == name.lower():
+            return ev
+    raise typer.BadParameter(
+        f"未知事件 {name!r}，可选：{', '.join(_HOOK_EVENT_NAMES)}",
+    )
+
+
+@hook_app.command("path")
+def hook_path() -> None:
+    """打印 hooks 目录路径。"""
+    from xuanji.config import hooks_dir
+    console.print(str(hooks_dir()))
+
+
+@hook_app.command("install-samples")
+def hook_install_samples(
+    force: bool = typer.Option(
+        False, "--force", "-f", help="覆盖同名文件（默认遇到同名跳过）",
+    ),
+) -> None:
+    """把内置示范 hook YAML 拷到 hooks_dir()，立即可用。
+
+    内置：
+    - PreToolUse.yaml（黑名单 / 敏感写入预警）
+    - PostToolUse.yaml（命令日志）
+    - UserPromptSubmit.yaml（部署/生产 hint）
+    """
+    import shutil
+
+    from xuanji.config import hooks_dir
+    from xuanji.resources import list_sample_hooks
+
+    target = hooks_dir()
+    samples = list_sample_hooks()
+    if not samples:
+        console.print("[yellow]没找到内置示范 hook（resources/hooks 为空）[/yellow]")
+        return
+    installed: list[str] = []
+    skipped: list[str] = []
+    for src in samples:
+        dst = target / src.name
+        if dst.exists() and not force:
+            skipped.append(src.name)
+            continue
+        shutil.copy2(src, dst)
+        installed.append(src.name)
+    for name in installed:
+        console.print(f"[green]✔[/green] {name}")
+    for name in skipped:
+        console.print(f"[dim]·[/dim] {name}（已存在，跳过；--force 覆盖）")
+    console.print(f"[bold]目标目录：[/bold]{target}")
+
+
+@hook_app.command("list")
+def hook_list() -> None:
+    """列出全部事件下已注册的 hook spec。"""
+    from xuanji.config import hooks_dir
+    from xuanji.hooks import HookEvent, HooksRegistry
+
+    reg = HooksRegistry(hooks_dir())
+    table = Table(title=f"Hooks · {hooks_dir()}")
+    table.add_column("event", style="cyan")
+    table.add_column("matcher", style="green")
+    table.add_column("command", overflow="fold")
+    table.add_column("timeout", style="magenta")
+    total = 0
+    for ev in HookEvent:
+        for spec in reg.for_event(ev):
+            table.add_row(ev.value, spec.matcher, spec.command, f"{spec.timeout}s")
+            total += 1
+    if total == 0:
+        console.print(
+            f"[yellow]{hooks_dir()} 下还没有 hook 文件。"
+            "在 PreToolUse.yaml / PostToolUse.yaml / UserPromptSubmit.yaml / Notification.yaml 下写 hooks。[/yellow]",
+        )
+        return
+    console.print(table)
+
+
+@hook_app.command("explain")
+def hook_explain(
+    event: str = typer.Option(
+        ...,
+        "--event",
+        "-e",
+        help="事件名：PreToolUse / PostToolUse / UserPromptSubmit / Notification",
+    ),
+    tool: str | None = typer.Option(
+        None, "--tool", "-t", help="假设触发的 tool 名（PreToolUse / PostToolUse 用）",
+    ),
+    prompt: str | None = typer.Option(
+        None, "--prompt", "-p", help="假设的用户输入（UserPromptSubmit 用）",
+    ),
+) -> None:
+    """dry-run：当前事件 + 输入会触发哪些 hook，每条解释为什么命中。
+
+    不启动子进程，纯静态。用来排查 matcher 是否写对、拒绝是否会真起作用。
+
+    例：xuanji hook explain --event PreToolUse --tool run_shell
+    """
+    from xuanji.config import hooks_dir
+    from xuanji.hooks import HooksRegistry, explain_hooks
+
+    ev = _resolve_hook_event(event)
+    reg = HooksRegistry(hooks_dir())
+    explanations = explain_hooks(reg, ev, tool_name=tool, prompt=prompt)
+    if not explanations:
+        console.print(
+            f"[yellow]{ev.value} 下没有任何 hook 注册。文件：{hooks_dir() / (ev.value + '.yaml')}[/yellow]",
+        )
+        return
+    table = Table(title=f"Hook explain · {ev.value}")
+    table.add_column("matcher", style="green")
+    table.add_column("命中?", justify="center")
+    table.add_column("拒绝有效?", justify="center")
+    table.add_column("原因", overflow="fold")
+    table.add_column("command", overflow="fold")
+    for ex in explanations:
+        hit_cell = "[green]√[/green]" if ex.matched else "[dim]·[/dim]"
+        deny_cell = "[red]√[/red]" if ex.can_deny else "[dim]N/A[/dim]"
+        table.add_row(ex.spec.matcher, hit_cell, deny_cell, ex.reason, ex.spec.command)
+    console.print(table)
+
+
+@hook_app.command("test")
+def hook_test(
+    event: str = typer.Option(..., "--event", "-e", help="事件名"),
+    tool: str | None = typer.Option(None, "--tool", "-t", help="假设触发的 tool 名"),
+    prompt: str | None = typer.Option(None, "--prompt", "-p", help="假设的用户输入"),
+    payload_json: str = typer.Option(
+        "{}", "--payload", help="喂给 hook stdin 的 JSON payload",
+    ),
+) -> None:
+    """**真的执行**命中的 hook，看 stdout/stderr/exit_code/decision。
+
+    与 explain 不同：会启动子进程跑 hook 命令。生产 deny 逻辑调试用。
+    """
+    import asyncio
+    import json
+
+    from xuanji.config import hooks_dir
+    from xuanji.hooks import HooksRegistry, run_matching_hooks
+
+    ev = _resolve_hook_event(event)
+    try:
+        payload = json.loads(payload_json)
+    except json.JSONDecodeError as e:
+        raise typer.BadParameter(f"--payload 不是合法 JSON：{e}") from e
+    reg = HooksRegistry(hooks_dir())
+    results = asyncio.run(
+        run_matching_hooks(
+            reg, ev, payload, cwd=Path.cwd(), tool_name=tool, prompt=prompt,
+        ),
+    )
+    if not results:
+        console.print(f"[yellow]没有 hook 命中 {ev.value}。[/yellow]")
+        return
+    for r in results:
+        head = f"[bold]matcher={r.spec.matcher!r}[/bold] exit={r.exit_code}"
+        if r.error:
+            head += f" [red]error={r.error}[/red]"
+        if r.denied:
+            head += " [red]DENIED[/red]"
+        console.print(head)
+        if r.stdout:
+            console.print(f"[dim]stdout:[/dim] {r.stdout.strip()}")
+        if r.stderr:
+            console.print(f"[dim]stderr:[/dim] {r.stderr.strip()}")
+        if r.reason:
+            console.print(f"[dim]reason:[/dim] {r.reason}")
+        console.print()
+
+
+# ---------- ipc ----------
+
+
+@app.command()
+def ipc() -> None:
+    """启动 stdio JSON-RPC 后端（VS Code 插件 / Tauri 桌面端调用）。
+
+    协议：LSP 风格 Content-Length 分帧 + JSON-RPC 2.0。
+    日志走 stderr，避免污染 stdout 协议流。
+    """
+    from xuanji.ipc.dispatcher import build_dispatcher
+    from xuanji.ipc.server import run_stdio_server
+    from xuanji.server.runtime import ServerRuntime
+
+    runtime = ServerRuntime()
+    methods = build_dispatcher(
+        knowledge=runtime.knowledge,
+        memory=runtime.memory,
+        scaffold=runtime.scaffold_engine,
+        project_root=runtime.project_root,
+        project_namespace=runtime.project_namespace,
+        cfg_store_factory=ConfigStore,
+        tool_registry_factory=runtime.build_registry,
+    )
+    asyncio.run(run_stdio_server(methods))
+
+
+# ---------- mcp-serve ----------
+
+
+@app.command(name="mcp-serve")
+def mcp_serve(
+    project_root: Path | None = typer.Option(
+        None, "--project-root", "-r",
+        help="项目根目录，默认 cwd",
+        exists=True, file_okay=False, dir_okay=True,
+    ),
+) -> None:
+    """以 MCP Server 身份暴露玄玑工具到 stdio。
+
+    协议：JSON-RPC 2.0 over stdio NDJSON（与 Claude Code / Codex 互通）。
+    日志走 stderr，stdout 留给协议流。
+
+    用法（在 CC 端配 mcp_servers）：
+        {"command": "uv", "args": ["run", "xuanji", "mcp-serve"]}
+    """
+    import io
+    import sys as _sys
+
+    from xuanji.mcp.server import McpServer
+    from xuanji.server.runtime import ServerRuntime
+
+    # 强制 UTF-8 stdio，避免 Windows GBK 把中文打成 �
+    if isinstance(_sys.stdout, io.TextIOWrapper):
+        _sys.stdout.reconfigure(encoding="utf-8")
+    if isinstance(_sys.stderr, io.TextIOWrapper):
+        _sys.stderr.reconfigure(encoding="utf-8")
+    if isinstance(_sys.stdin, io.TextIOWrapper):
+        _sys.stdin.reconfigure(encoding="utf-8")
+
+    runtime = ServerRuntime(project_root=project_root)
+    registry = runtime.build_registry()
+    server = McpServer(registry, project_root=runtime.project_root)
+    asyncio.run(server.run_stdio())
 
 
 if __name__ == "__main__":

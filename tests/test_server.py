@@ -9,22 +9,22 @@ from typing import Any
 import pytest
 from fastapi.testclient import TestClient
 
-from core.config import (
+from xuanji.config import (
     AnthropicProfile,
     ConfigStore,
     DeepSeekProfile,
 )
-from core.knowledge.models import Chunk
-from core.llm.providers.base import (
+from xuanji.knowledge.models import Chunk
+from xuanji.llm.providers.base import (
     AssistantMessage,
     Delta,
     LLMProvider,
     Message,
     ModelCapabilities,
 )
-from core.memory.models import Memory, MemoryKind, MemoryScope
-from core.server.app import create_app
-from core.server.runtime import ServerRuntime
+from xuanji.memory.models import Memory, MemoryKind, MemoryScope
+from xuanji.server.app import create_app
+from xuanji.server.runtime import ServerRuntime
 
 
 @pytest.fixture
@@ -212,7 +212,7 @@ def test_websocket_chat_streams_text(
         Delta(type="message_done", stop_reason="end_turn"),
     ]
     monkeypatch.setattr(
-        "core.neural.conductor.build_provider",
+        "xuanji.neural.conductor.build_provider",
         lambda _p: _StreamProvider(deltas),
     )
 

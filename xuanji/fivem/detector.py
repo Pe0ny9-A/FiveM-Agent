@@ -18,8 +18,8 @@ from __future__ import annotations
 import re
 from pathlib import Path
 
-from core.fivem.manifest import parse_fxmanifest_file
-from core.fivem.models import (
+from xuanji.fivem.manifest import parse_fxmanifest_file
+from xuanji.fivem.models import (
     FiveMContext,
     Framework,
     InventoryKind,

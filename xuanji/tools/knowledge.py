@@ -10,8 +10,8 @@ from __future__ import annotations
 
 from typing import Any, ClassVar
 
-from core.capability.tool import RiskTag, Tool, ToolCtx, ToolError, ToolResult
-from core.knowledge.store.base import KnowledgeStore
+from xuanji.capability.tool import RiskTag, Tool, ToolCtx, ToolError, ToolResult
+from xuanji.knowledge.store.base import KnowledgeStore
 
 _TEXT_PREVIEW_LEN = 600
 

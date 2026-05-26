@@ -14,12 +14,12 @@ import re
 from pathlib import Path
 from typing import Any, ClassVar
 
-from core.capability.tool import RiskTag, Tool, ToolCtx, ToolError, ToolResult
-from core.fivem.analyzer import analyze_resource
-from core.fivem.detector import detect_fivem_context, summarize_for_prompt
-from core.fivem.models import Framework, InventoryKind, TargetKind
-from core.fivem.presets import ScaffoldFile, ScaffoldPreset
-from core.fivem.scaffold import ScaffoldEngine
+from xuanji.capability.tool import RiskTag, Tool, ToolCtx, ToolError, ToolResult
+from xuanji.fivem.analyzer import analyze_resource
+from xuanji.fivem.detector import detect_fivem_context, summarize_for_prompt
+from xuanji.fivem.models import Framework, InventoryKind, TargetKind
+from xuanji.fivem.presets import ScaffoldFile, ScaffoldPreset
+from xuanji.fivem.scaffold import ScaffoldEngine
 
 _SLUG_RE = re.compile(r"^[a-z][a-z0-9-]{1,40}$")
 

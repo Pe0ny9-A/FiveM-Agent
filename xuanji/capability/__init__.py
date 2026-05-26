@@ -3,8 +3,8 @@
 M0 阶段先实装 Tool 与 ToolRegistry。Skill 与 Pack 留接口，M1+ 接入。
 """
 
-from core.capability.registry import ToolRegistry
-from core.capability.tool import (
+from xuanji.capability.registry import ToolRegistry
+from xuanji.capability.tool import (
     RiskTag,
     Tool,
     ToolCtx,

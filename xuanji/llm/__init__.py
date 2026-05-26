@@ -1,6 +1,6 @@
 """LLM 抽象层：Provider 协议、模型能力、统一消息与流式 Delta。"""
 
-from core.llm.providers.base import (
+from xuanji.llm.providers.base import (
     AssistantMessage,
     Delta,
     LLMProvider,

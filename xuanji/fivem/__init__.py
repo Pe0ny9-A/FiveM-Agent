@@ -10,15 +10,15 @@
 - scaffold：从模板生成新 resource 骨架
 """
 
-from core.fivem.detector import detect_fivem_context, summarize_for_prompt
-from core.fivem.models import (
+from xuanji.fivem.detector import detect_fivem_context, summarize_for_prompt
+from xuanji.fivem.models import (
     FiveMContext,
     Framework,
     FxManifest,
     InventoryKind,
     TargetKind,
 )
-from core.fivem.scaffold import (
+from xuanji.fivem.scaffold import (
     SCAFFOLD_PRESETS,
     ScaffoldEngine,
     ScaffoldResult,

@@ -10,10 +10,10 @@ M1 阶段先用 SQLite FTS5 全文检索打通采集 → 索引 → 工具调用
 - KnowledgeStore：检索协议，FTS5 实现 / 未来 LanceDB 实现各自满足
 """
 
-from core.knowledge.models import Chunk, Source, Symbol
-from core.knowledge.store.base import KnowledgeStore, SearchHit
-from core.knowledge.store.sqlite_fts import SqliteKnowledgeStore
-from core.knowledge.vector import (
+from xuanji.knowledge.models import Chunk, Source, Symbol
+from xuanji.knowledge.store.base import KnowledgeStore, SearchHit
+from xuanji.knowledge.store.sqlite_fts import SqliteKnowledgeStore
+from xuanji.knowledge.vector import (
     Embedder,
     HashingEmbedder,
     InMemoryVectorStore,

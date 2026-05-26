@@ -17,11 +17,11 @@ from typing import Any, ClassVar
 
 import pytest
 
-from core.capability.registry import ToolRegistry
-from core.capability.tool import RiskTag, Tool, ToolCtx, ToolResult
-from core.config import DeepSeekProfile
-from core.gate import GateInterceptor, NoOpHITLBridge
-from core.llm.providers.base import (
+from xuanji.capability.registry import ToolRegistry
+from xuanji.capability.tool import RiskTag, Tool, ToolCtx, ToolResult
+from xuanji.config import DeepSeekProfile
+from xuanji.gate import GateInterceptor, NoOpHITLBridge
+from xuanji.llm.providers.base import (
     AssistantMessage,
     Delta,
     LLMProvider,
@@ -29,7 +29,7 @@ from core.llm.providers.base import (
     ModelCapabilities,
     Usage,
 )
-from core.neural import Conductor
+from xuanji.neural import Conductor
 
 
 class FakeProvider(LLMProvider):
@@ -104,7 +104,7 @@ async def test_conductor_streams_and_accumulates_history(monkeypatch: pytest.Mon
     def fake_build(_profile):  # type: ignore[no-untyped-def]
         return FakeProvider(fake_deltas)
 
-    monkeypatch.setattr("core.neural.conductor.build_provider", fake_build)
+    monkeypatch.setattr("xuanji.neural.conductor.build_provider", fake_build)
 
     profile = DeepSeekProfile(
         label="t", api_key="sk-test", default_model="deepseek-chat"
@@ -135,7 +135,7 @@ async def test_conductor_audit_records_lifecycle(monkeypatch: pytest.MonkeyPatch
         ),
     ]
     monkeypatch.setattr(
-        "core.neural.conductor.build_provider",
+        "xuanji.neural.conductor.build_provider",
         lambda _p: FakeProvider(fake_deltas),
     )
 
@@ -156,7 +156,7 @@ async def test_conductor_audit_records_lifecycle(monkeypatch: pytest.MonkeyPatch
 async def test_conductor_uses_profile_default_model(monkeypatch: pytest.MonkeyPatch) -> None:
     """未显式传 model 时，应使用 profile.default_model。"""
     monkeypatch.setattr(
-        "core.neural.conductor.build_provider",
+        "xuanji.neural.conductor.build_provider",
         lambda _p: FakeProvider([Delta(type="message_done", stop_reason="end_turn")]),
     )
     conductor = Conductor(
@@ -171,7 +171,7 @@ async def test_conductor_passes_aliases_into_system_prompt(
 ) -> None:
     """自定义 alias 应该透传到 system prompt 里。"""
     monkeypatch.setattr(
-        "core.neural.conductor.build_provider",
+        "xuanji.neural.conductor.build_provider",
         lambda _p: FakeProvider([Delta(type="message_done", stop_reason="end_turn")]),
     )
     conductor = Conductor(
@@ -191,7 +191,7 @@ async def test_conductor_default_aliases_no_directive(
 ) -> None:
     """默认 alias 时 system prompt 不应有称呼覆盖段。"""
     monkeypatch.setattr(
-        "core.neural.conductor.build_provider",
+        "xuanji.neural.conductor.build_provider",
         lambda _p: FakeProvider([Delta(type="message_done", stop_reason="end_turn")]),
     )
     conductor = Conductor(
@@ -254,7 +254,7 @@ async def test_conductor_tool_loop_two_rounds(
         ],
     ]
     monkeypatch.setattr(
-        "core.neural.conductor.build_provider",
+        "xuanji.neural.conductor.build_provider",
         lambda _p: FakeProvider(rounds),
     )
     registry = ToolRegistry()
@@ -304,7 +304,7 @@ async def test_conductor_gate_blocks_destructive(
         ],
     ]
     monkeypatch.setattr(
-        "core.neural.conductor.build_provider",
+        "xuanji.neural.conductor.build_provider",
         lambda _p: FakeProvider(rounds),
     )
     registry = ToolRegistry()

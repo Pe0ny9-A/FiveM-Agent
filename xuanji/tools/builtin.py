@@ -16,7 +16,7 @@ import re
 from pathlib import Path
 from typing import Any, ClassVar
 
-from core.capability.tool import RiskTag, Tool, ToolCtx, ToolError, ToolResult
+from xuanji.capability.tool import RiskTag, Tool, ToolCtx, ToolError, ToolResult
 
 
 def _resolve(path: str, ctx: ToolCtx) -> Path:
@@ -253,6 +253,7 @@ class RunShellTool(Tool):
         "高风险，必经用户确认。"
     )
     risk = RiskTag.EXEC
+    is_subprocess_safe = True
     schema: ClassVar[dict[str, Any]] = {
         "type": "object",
         "properties": {

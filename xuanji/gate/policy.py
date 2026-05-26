@@ -8,7 +8,7 @@ from typing import Any, Protocol
 
 from pydantic import BaseModel
 
-from core.capability.tool import RiskTag, Tool, ToolCtx
+from xuanji.capability.tool import RiskTag, Tool, ToolCtx
 
 
 class VerdictKind(StrEnum):

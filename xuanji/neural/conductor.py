@@ -24,20 +24,21 @@ from collections.abc import AsyncIterator
 from pathlib import Path
 from typing import Any
 
-from core.body.sandbox import InProcSandbox, Sandbox
-from core.capability.registry import ToolRegistry
-from core.capability.tool import (
+from xuanji.body.sandbox import InProcSandbox, Sandbox
+from xuanji.capability.registry import ToolRegistry
+from xuanji.capability.tool import (
     Tool,
     ToolCtx,
     ToolResult,
     tool_to_anthropic_schema,
     tool_to_openai_schema,
 )
-from core.config.profiles import Profile
-from core.gate.bridge import HITLBridge, NoOpHITLBridge
-from core.gate.interceptor import GateInterceptor, GateRefusal
-from core.gate.policy import Policy
-from core.llm.providers.base import (
+from xuanji.config.profiles import Profile
+from xuanji.gate.bridge import HITLBridge, NoOpHITLBridge
+from xuanji.gate.interceptor import GateInterceptor, GateRefusal
+from xuanji.gate.policy import Policy
+from xuanji.hooks import HookEvent, HooksRegistry, run_matching_hooks
+from xuanji.llm.providers.base import (
     Delta,
     LLMProvider,
     Message,
@@ -45,11 +46,11 @@ from core.llm.providers.base import (
     ToolCallBlock,
     ToolResultBlock,
 )
-from core.llm.providers.factory import build_provider
-from core.memory.reflux import refluxed_fragment
-from core.memory.store.base import MemoryStore
-from core.neural.audit import AuditEvent, AuditLog
-from core.persona.modes import (
+from xuanji.llm.providers.factory import build_provider
+from xuanji.memory.reflux import refluxed_fragment
+from xuanji.memory.store.base import MemoryStore
+from xuanji.neural.audit import AuditEvent, AuditLog
+from xuanji.persona.modes import (
     DEFAULT_ASSISTANT_ALIAS,
     DEFAULT_USER_ALIAS,
     PersonaMode,
@@ -138,6 +139,7 @@ class Conductor:
         reflux_top_k: int = 5,
         max_tool_iterations: int = 10,
         static_extra: str | None = None,
+        hooks: HooksRegistry | None = None,
     ) -> None:
         provider = build_provider(profile)
         self.ctx = SessionCtx(
@@ -168,6 +170,8 @@ class Conductor:
         self.reflux_top_k = reflux_top_k
         # 启动期固定注入到 system prompt 的额外片段（如 FiveM 项目身份卡）
         self.static_extra = static_extra
+        # Hooks：可选，None 时全程绕过 hook 路径
+        self.hooks = hooks
 
         self.audit.emit(
             AuditEvent(
@@ -389,6 +393,36 @@ class Conductor:
             args_final=args,
         )
 
+        # PreToolUse hooks：可拒绝调用
+        if self.hooks is not None:
+            pre_results = await run_matching_hooks(
+                self.hooks,
+                HookEvent.PRE_TOOL_USE,
+                {"tool": tool_name, "args": args, "trace_id": trace_id},
+                cwd=self.project_root,
+                tool_name=tool_name,
+            )
+            for r in pre_results:
+                if r.denied:
+                    err = f"PreToolUse hook 拒绝：{r.reason or r.spec.command}"
+                    self._last_results[tool_id] = ToolResultBlock(
+                        tool_call_id=tool_id, output=err, is_error=True,
+                    )
+                    self.audit.emit(
+                        AuditEvent(
+                            trace_id=trace_id,
+                            type="error",
+                            payload={"hook_deny": r.reason, "tool": tool_name},
+                        ),
+                    )
+                    yield Delta(
+                        type="tool_run_blocked",
+                        tool_call_id=tool_id,
+                        tool_name=tool_name,
+                        tool_run_reason=err,
+                    )
+                    return
+
         # 司辰阁守门
         try:
             await self.gate.check(tool, args, ctx_for_tool)
@@ -431,6 +465,33 @@ class Conductor:
                 },
             ),
         )
+
+        # PostToolUse hooks：纯观察，不改变 result（异常也只是 audit）
+        if self.hooks is not None:
+            try:
+                await run_matching_hooks(
+                    self.hooks,
+                    HookEvent.POST_TOOL_USE,
+                    {
+                        "tool": tool_name,
+                        "args": args,
+                        "ok": result.ok,
+                        "error": result.error,
+                        "duration_ms": result.duration_ms,
+                        "trace_id": trace_id,
+                    },
+                    cwd=self.project_root,
+                    tool_name=tool_name,
+                )
+            except Exception as e:
+                self.audit.emit(
+                    AuditEvent(
+                        trace_id=trace_id,
+                        type="error",
+                        payload={"post_hook_error": str(e), "tool": tool_name},
+                    ),
+                )
+
         yield Delta(
             type="tool_run_done",
             tool_call_id=tool_id,

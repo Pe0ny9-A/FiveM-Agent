@@ -17,7 +17,7 @@ from typing import Any, cast
 
 from openai import AsyncOpenAI
 
-from core.llm.providers.base import (
+from xuanji.llm.providers.base import (
     AssistantMessage,
     ContentBlock,
     Delta,

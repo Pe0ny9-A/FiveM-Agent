@@ -73,6 +73,12 @@ class Tool(ABC):
     risk: ClassVar[RiskTag] = RiskTag.SAFE
     schema: ClassVar[dict[str, Any]]  # JSONSchema for arguments
 
+    is_subprocess_safe: ClassVar[bool] = False
+    """声明该工具能在 SubprocessSandbox 里跑。
+    要求：(1) __init__ 无必填参数；(2) 不持有跨进程不能复活的状态
+    （SQLite 连接 / 已开文件句柄 / 大对象）；(3) 不依赖父进程内存。
+    Conductor 默认 InProc，仅在路由器挑到 Subprocess 时才校验这个标志。"""
+
     @abstractmethod
     async def execute(self, args: dict[str, Any], ctx: ToolCtx) -> ToolResult:
         """执行工具。失败时可抛 ToolError 或返回 ToolResult(ok=False)。"""

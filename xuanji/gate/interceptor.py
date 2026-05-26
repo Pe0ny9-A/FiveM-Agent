@@ -4,9 +4,9 @@ from __future__ import annotations
 
 from typing import Any
 
-from core.capability.tool import Tool, ToolCtx
-from core.gate.bridge import HITLBridge
-from core.gate.policy import DefaultPolicy, Policy, Verdict, VerdictKind
+from xuanji.capability.tool import Tool, ToolCtx
+from xuanji.gate.bridge import HITLBridge
+from xuanji.gate.policy import DefaultPolicy, Policy, Verdict, VerdictKind
 
 
 class GateRefusal(Exception):

@@ -9,9 +9,9 @@ from __future__ import annotations
 from pathlib import Path
 from typing import Any, ClassVar
 
-from core.capability.tool import RiskTag, Tool, ToolCtx, ToolError, ToolResult
-from core.knowledge.crawler import CrawlPlan, CrawlSession
-from core.knowledge.store.base import KnowledgeStore
+from xuanji.capability.tool import RiskTag, Tool, ToolCtx, ToolError, ToolResult
+from xuanji.knowledge.crawler import CrawlPlan, CrawlSession
+from xuanji.knowledge.store.base import KnowledgeStore
 
 
 class CrawlSiteTool(Tool):

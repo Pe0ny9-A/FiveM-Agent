@@ -6,9 +6,9 @@ from pathlib import Path
 
 import pytest
 
-from core.body.sandbox import InProcSandbox
-from core.capability.tool import ToolCtx
-from core.tools.builtin import (
+from xuanji.body.sandbox import InProcSandbox
+from xuanji.capability.tool import ToolCtx
+from xuanji.tools.builtin import (
     ListDirTool,
     ReadFileTool,
     RipgrepTool,

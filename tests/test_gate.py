@@ -7,8 +7,8 @@ from typing import Any, ClassVar
 
 import pytest
 
-from core.capability.tool import RiskTag, Tool, ToolCtx, ToolResult
-from core.gate import (
+from xuanji.capability.tool import RiskTag, Tool, ToolCtx, ToolResult
+from xuanji.gate import (
     DefaultPolicy,
     GateInterceptor,
     GateRefusal,

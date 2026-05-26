@@ -11,7 +11,7 @@ from __future__ import annotations
 
 from typing import Any, Protocol
 
-from core.memory.models import Memory, MemoryKind, MemoryScope
+from xuanji.memory.models import Memory, MemoryKind, MemoryScope
 
 
 class MemoryStore(Protocol):

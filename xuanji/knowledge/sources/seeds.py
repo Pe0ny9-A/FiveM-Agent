@@ -10,7 +10,7 @@ M1 阶段先用手写 API 卡片解决最常见的开发查询。M2+ 接爬虫 +
 
 from __future__ import annotations
 
-from core.knowledge.models import Chunk, Source, Symbol
+from xuanji.knowledge.models import Chunk, Source, Symbol
 
 NS_QBCORE = "fivem.qbcore@1.x"
 NS_OX_LIB = "fivem.ox_lib@3.x"

@@ -22,9 +22,9 @@ from urllib.parse import urldefrag, urljoin, urlparse
 
 import httpx
 
-from core.knowledge.store.base import KnowledgeStore
-from core.tools.ingest import _ingest_chunks
-from core.tools.ingest_url import html_to_markdown
+from xuanji.knowledge.store.base import KnowledgeStore
+from xuanji.tools.ingest import _ingest_chunks
+from xuanji.tools.ingest_url import html_to_markdown
 
 _ANCHOR_RE = re.compile(r'<a[^>]+href=["\']([^"\']+)["\']', re.IGNORECASE)
 _SITEMAP_LOC_RE = re.compile(r"<loc>\s*([^<]+)\s*</loc>", re.IGNORECASE)

@@ -18,7 +18,7 @@
     uv run xuanji serve --host 127.0.0.1 --port 8765
 """
 
-from core.server.app import create_app
-from core.server.runtime import ServerRuntime
+from xuanji.server.app import create_app
+from xuanji.server.runtime import ServerRuntime
 
 __all__ = ["ServerRuntime", "create_app"]

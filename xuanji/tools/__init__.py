@@ -10,7 +10,7 @@ M2.5（自演化）：
 - 工厂工具：propose_tool（仅产草案到磁盘，不自动 publish）
 """
 
-from core.tools.builtin import (
+from xuanji.tools.builtin import (
     ListDirTool,
     ReadFileTool,
     RipgrepTool,
@@ -18,28 +18,34 @@ from core.tools.builtin import (
     WriteFileTool,
     builtin_tools,
 )
-from core.tools.factory import ProposeToolTool, tool_factory_tools
-from core.tools.ingest import (
+from xuanji.tools.factory import ProposeToolTool, tool_factory_tools
+from xuanji.tools.ingest import (
     IngestFileTool,
     IngestTextTool,
     UpsertSymbolTool,
     ingest_tools_offline,
 )
-from core.tools.ingest_url import IngestUrlTool
-from core.tools.knowledge import (
+from xuanji.tools.ingest_url import IngestUrlTool
+from xuanji.tools.knowledge import (
     KnowledgeSearchTool,
     LookupSymbolTool,
     knowledge_tools,
 )
-from core.tools.memory import RecallMemoryTool, WriteMemoryTool, memory_tools
-from core.tools.meta import (
+from xuanji.tools.memory import RecallMemoryTool, WriteMemoryTool, memory_tools
+from xuanji.tools.meta import (
     DescribeToolTool,
     ListSkillsTool,
     ListToolsTool,
     ReadSkillTool,
     meta_tools,
 )
-from core.tools.skills import (
+from xuanji.tools.skill_files import (
+    ListSkillFilesTool,
+    MatchSkillFileTool,
+    ReadSkillFileTool,
+    skill_file_tools,
+)
+from xuanji.tools.skills import (
     SKILLS_NAMESPACE,
     RunSkillTool,
     SaveSkillTool,
@@ -55,11 +61,14 @@ __all__ = [
     "IngestUrlTool",
     "KnowledgeSearchTool",
     "ListDirTool",
+    "ListSkillFilesTool",
     "ListSkillsTool",
     "ListToolsTool",
     "LookupSymbolTool",
+    "MatchSkillFileTool",
     "ProposeToolTool",
     "ReadFileTool",
+    "ReadSkillFileTool",
     "ReadSkillTool",
     "RecallMemoryTool",
     "RipgrepTool",
@@ -75,6 +84,7 @@ __all__ = [
     "knowledge_tools",
     "memory_tools",
     "meta_tools",
+    "skill_file_tools",
     "skill_tools",
     "tool_factory_tools",
 ]

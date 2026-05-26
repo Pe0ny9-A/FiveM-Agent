@@ -15,7 +15,7 @@ import time
 from pathlib import Path
 from typing import Any, ClassVar
 
-from core.capability.tool import RiskTag, Tool, ToolCtx, ToolError, ToolResult
+from xuanji.capability.tool import RiskTag, Tool, ToolCtx, ToolError, ToolResult
 
 
 def _slug(text: str) -> str:

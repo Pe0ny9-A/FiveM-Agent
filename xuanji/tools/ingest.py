@@ -16,10 +16,10 @@ import re
 from pathlib import Path
 from typing import Any, ClassVar
 
-from core.capability.tool import RiskTag, Tool, ToolCtx, ToolError, ToolResult
-from core.knowledge.chunker import chunk_markdown
-from core.knowledge.models import Chunk, Source, Symbol
-from core.knowledge.store.base import KnowledgeStore
+from xuanji.capability.tool import RiskTag, Tool, ToolCtx, ToolError, ToolResult
+from xuanji.knowledge.chunker import chunk_markdown
+from xuanji.knowledge.models import Chunk, Source, Symbol
+from xuanji.knowledge.store.base import KnowledgeStore
 
 
 def _stable_id(*parts: str) -> str:

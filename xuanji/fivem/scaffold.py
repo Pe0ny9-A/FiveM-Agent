@@ -17,8 +17,8 @@ import re
 from dataclasses import dataclass, field
 from pathlib import Path
 
-from core.fivem.models import Framework, InventoryKind, TargetKind
-from core.fivem.presets import (
+from xuanji.fivem.models import Framework, InventoryKind, TargetKind
+from xuanji.fivem.presets import (
     SCAFFOLD_PRESETS,
     ScaffoldFile,
     ScaffoldPreset,

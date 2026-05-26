@@ -17,8 +17,8 @@ from collections import defaultdict
 from dataclasses import dataclass, field
 from pathlib import Path
 
-from core.fivem.detector import detect_fivem_context
-from core.fivem.models import FiveMContext
+from xuanji.fivem.detector import detect_fivem_context
+from xuanji.fivem.models import FiveMContext
 
 # ============================================================
 # 正则集

@@ -7,21 +7,24 @@
 - ConfigStore 是同一套 schema 的唯一持久化入口，未来 Web/Tauri 直接复用。
 """
 
-from core.config.paths import (
+from xuanji.config.paths import (
     config_dir,
     config_file_path,
     crawl_cache_path,
     data_dir,
     factory_db_path,
+    hooks_dir,
     knowledge_db_path,
     memory_db_path,
     scaffold_drafts_dir,
     scaffold_presets_dir,
+    skills_dir,
     tool_drafts_dir,
     tool_published_dir,
     tool_staged_dir,
+    vector_db_path,
 )
-from core.config.profiles import (
+from xuanji.config.profiles import (
     AnthropicProfile,
     DeepSeekProfile,
     OpenAICompatibleProfile,
@@ -29,7 +32,7 @@ from core.config.profiles import (
     Profile,
     ProfileKind,
 )
-from core.config.store import ConfigStore, XuanjiConfig
+from xuanji.config.store import ConfigStore, XuanjiConfig
 
 __all__ = [
     "AnthropicProfile",
@@ -45,11 +48,14 @@ __all__ = [
     "crawl_cache_path",
     "data_dir",
     "factory_db_path",
+    "hooks_dir",
     "knowledge_db_path",
     "memory_db_path",
     "scaffold_drafts_dir",
     "scaffold_presets_dir",
+    "skills_dir",
     "tool_drafts_dir",
     "tool_published_dir",
     "tool_staged_dir",
+    "vector_db_path",
 ]

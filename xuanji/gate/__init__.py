@@ -7,9 +7,9 @@
 - GateInterceptor：注入到 Conductor.dispatch 的中间件，把 Policy 与 HITLBridge 串起来
 """
 
-from core.gate.bridge import HITLBridge, NoOpHITLBridge
-from core.gate.interceptor import GateInterceptor, GateRefusal
-from core.gate.policy import DefaultPolicy, Policy, Verdict, VerdictKind
+from xuanji.gate.bridge import HITLBridge, NoOpHITLBridge
+from xuanji.gate.interceptor import GateInterceptor, GateRefusal
+from xuanji.gate.policy import DefaultPolicy, Policy, Verdict, VerdictKind
 
 __all__ = [
     "DefaultPolicy",

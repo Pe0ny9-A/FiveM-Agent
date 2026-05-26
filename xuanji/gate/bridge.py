@@ -8,7 +8,7 @@ from __future__ import annotations
 
 from typing import Any, Protocol
 
-from core.capability.tool import Tool
+from xuanji.capability.tool import Tool
 
 
 class HITLBridge(Protocol):
