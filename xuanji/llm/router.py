@@ -102,6 +102,10 @@ def default_policies() -> list[RoutingPolicy]:
     设计原则：policy 只挑 profile **种类**（哪一家），不写死 model id——
     实际 model 由所选 profile 的 default_model 决定。这样小宝在任一
     profile 上换模型，全局立即生效，路由表保持稳定。
+
+    0.9.3 起默认偏向 DeepSeek：V4 Pro 在玄玑「代码强化段」加持下
+    与 Opus 4.7 / GPT-5.4 在工程任务上拉齐，且中文母语 + 价格友好。
+    Anthropic / OpenAI 留作长上下文与严苛审查的备选。
     """
     return [
         RoutingPolicy(
@@ -114,15 +118,17 @@ def default_policies() -> list[RoutingPolicy]:
         RoutingPolicy(
             name="reviewer-strict",
             when_role=["reviewer"],
-            prefer_profile_kinds=[ProfileKind.ANTHROPIC, ProfileKind.OPENAI],
-            reason="审查严格：偏好 Anthropic",
+            prefer_profile_kinds=[
+                ProfileKind.ANTHROPIC, ProfileKind.OPENAI, ProfileKind.DEEPSEEK,
+            ],
+            reason="审查严格：Anthropic 优先，DeepSeek 兜底",
         ),
         RoutingPolicy(
             name="researcher-tool-loop",
             when_role=["researcher"],
             when_task_kind=["tool-loop"],
-            prefer_profile_kinds=[ProfileKind.ANTHROPIC],
-            reason="研究员紧 tool loop：偏好 Anthropic",
+            prefer_profile_kinds=[ProfileKind.DEEPSEEK, ProfileKind.ANTHROPIC],
+            reason="研究员紧 tool loop：DeepSeek 母语顺 + 代码强化段",
         ),
         RoutingPolicy(
             name="cn-heavy-content",
@@ -134,27 +140,29 @@ def default_policies() -> list[RoutingPolicy]:
             name="summary-bulk",
             when_task_kind=["summary"],
             when_complexity=["low", "medium"],
-            prefer_profile_kinds=[ProfileKind.ANTHROPIC, ProfileKind.DEEPSEEK],
-            reason="文档摘要 / 批量分类：用 profile default 即可",
+            prefer_profile_kinds=[ProfileKind.DEEPSEEK, ProfileKind.ANTHROPIC],
+            reason="文档摘要 / 批量分类：DeepSeek 性价比优先",
         ),
         RoutingPolicy(
             name="routing-decision",
             when_task_kind=["routing"],
-            prefer_profile_kinds=[ProfileKind.ANTHROPIC, ProfileKind.DEEPSEEK],
-            reason="路由判定本身：用 profile default",
+            prefer_profile_kinds=[ProfileKind.DEEPSEEK, ProfileKind.ANTHROPIC],
+            reason="路由判定本身：DeepSeek 便宜",
         ),
         RoutingPolicy(
             name="dev-tool-heavy",
             when_task_kind=["dev", "tool-loop"],
-            prefer_profile_kinds=[ProfileKind.ANTHROPIC, ProfileKind.OPENAI],
-            reason="开发场景 tool loop：偏好 Anthropic",
+            prefer_profile_kinds=[
+                ProfileKind.DEEPSEEK, ProfileKind.ANTHROPIC, ProfileKind.OPENAI,
+            ],
+            reason="开发场景 tool loop：DeepSeek V4 Pro + 代码强化段为默认",
         ),
         RoutingPolicy(
             name="planning-strategic",
             when_task_kind=["planning"],
             when_complexity=["medium", "high"],
-            prefer_profile_kinds=[ProfileKind.ANTHROPIC],
-            reason="规划要看远：偏好 Anthropic",
+            prefer_profile_kinds=[ProfileKind.ANTHROPIC, ProfileKind.DEEPSEEK],
+            reason="规划要看远：Anthropic 优先",
         ),
     ]
 

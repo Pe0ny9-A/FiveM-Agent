@@ -52,6 +52,7 @@ from xuanji.memory.reflux import refluxed_fragment
 from xuanji.memory.store.base import MemoryStore
 from xuanji.neural.audit import AuditEvent, AuditLog
 from xuanji.neural.compaction import CompactionConfig, compact_history
+from xuanji.persona.code_strength import code_strength_fragment
 from xuanji.persona.modes import (
     DEFAULT_ASSISTANT_ALIAS,
     DEFAULT_USER_ALIAS,
@@ -83,6 +84,45 @@ def _stringify_output(output: object) -> str:
         return json.dumps(output, ensure_ascii=False)
     except (TypeError, ValueError):
         return str(output)
+
+
+class _PrefixDedup:
+    """流式前缀去重——多轮 tool loop 模型偶尔把上一轮的开场白整段复读。
+
+    工作原理：
+    - 上一轮 assistant 完整 text 留作 ref。
+    - 下一轮 text_delta 累积到 buf；只要 buf 是 ref 的（真）前缀，就吞掉不发。
+    - 一旦 buf 长度超过 ref 或字符开始不匹配，认为本轮和上轮独立——
+      flush 出 buf 中超出 ref 的尾段，之后所有 chunk 直接透传。
+    - 没有上一轮（ref=""）时直接透传。
+
+    保留这一层是 system prompt 复读约束的兜底；对正常不复读的轮次零开销。
+    """
+
+    def __init__(self, ref: str) -> None:
+        self._ref = ref
+        self._buf = ""
+        self._passthrough = ref == ""
+
+    def feed(self, chunk: str) -> str:
+        """喂进一段新增 chunk，返回应当向外吐出的字符串（可能为空）。"""
+        if self._passthrough:
+            return chunk
+        self._buf += chunk
+        # buf 仍是 ref 的前缀 → 全部吞掉，等更多
+        if self._ref.startswith(self._buf):
+            return ""
+        # 找出 buf 与 ref 共同前缀长度
+        common = 0
+        for a, b in zip(self._buf, self._ref, strict=False):
+            if a != b:
+                break
+            common += 1
+        # 切到独立轨：之后透传，先把已经超出 ref 的尾段吐出来
+        self._passthrough = True
+        tail = self._buf[common:]
+        self._buf = ""
+        return tail
 
 
 class SessionCtx:
@@ -242,6 +282,13 @@ class Conductor:
                 extras.append(self.static_extra)
             # XUANJI.md 项目宪法 — 用户级 + 项目级，项目级靠后权重更高
             extras.extend(self._xuanji_md_fragments)
+            # 模型代码能力强化段（DeepSeek V4 Pro 等会拼上 Opus 风格的工程素养）
+            cs = code_strength_fragment(
+                self.ctx.provider.name,
+                self.ctx.model,
+            )
+            if cs:
+                extras.append(cs)
             if reflux_text:
                 extras.append(reflux_text)
             return build_system_prompt(
@@ -251,6 +298,8 @@ class Conductor:
                 user_alias=self.ctx.user_alias,
                 extra_fragments=extras or None,
             )
+
+        last_assistant_text = ""
 
         for iteration in range(self.max_tool_iterations):
             # 压缩上下文：超过阈值时折叠 history 头部
@@ -285,6 +334,8 @@ class Conductor:
             text_buf = ""
             thinking_buf = ""
             tool_calls: dict[int, dict[str, Any]] = {}  # index → {id, name, args}
+            # 仅在第二轮起启用：把上一轮的整段 assistant text 当作复读检测基准
+            dedup = _PrefixDedup(last_assistant_text if iteration > 0 else "")
 
             # 模型支持 prompt cache 时自动给 system 加缓存（Anthropic 走 cache_system，
             # OpenAI / DeepSeek 是自动 prefix cache 不需要参数）
@@ -310,6 +361,14 @@ class Conductor:
                                 payload={"chunk": delta.text},
                             ),
                         )
+                        # 流式去重：如果模型复读上一轮 text 开头，吞掉重复段
+                        # history 仍存原文，model 自己看到自己说过什么；
+                        # 只是 CLI / Web 不把重复的话再朗读一遍给小宝
+                        emit = dedup.feed(delta.text)
+                        if not emit:
+                            continue
+                        if emit != delta.text:
+                            delta = Delta(type="text_delta", text=emit)
                     elif delta.type == "thinking_delta" and delta.text:
                         thinking_buf += delta.text
                     elif delta.type == "tool_call_start":
@@ -372,6 +431,9 @@ class Conductor:
                     )
             if asst_blocks:
                 self.ctx.history.append(Message(role="assistant", content=asst_blocks))
+
+            # 记下本轮整段 text 给下一轮做复读检测基准
+            last_assistant_text = text_buf
 
             if not tool_calls:
                 # 模型没要工具，本轮结束

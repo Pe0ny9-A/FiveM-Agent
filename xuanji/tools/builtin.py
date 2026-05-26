@@ -17,6 +17,7 @@ from pathlib import Path
 from typing import Any, ClassVar
 
 from xuanji.capability.tool import RiskTag, Tool, ToolCtx, ToolError, ToolResult
+from xuanji.tools._args import require_str
 
 
 def _resolve(path: str, ctx: ToolCtx) -> Path:
@@ -48,7 +49,11 @@ class ReadFileTool(Tool):
     }
 
     async def execute(self, args: dict[str, Any], ctx: ToolCtx) -> ToolResult:
-        path = _resolve(args["path"], ctx)
+        raw_path, err = require_str(args, "path")
+        if err is not None:
+            return err
+        assert raw_path is not None
+        path = _resolve(raw_path, ctx)
         max_bytes = int(args.get("max_bytes", 200_000))
         if not path.exists():
             raise ToolError(f"文件不存在：{path}")
@@ -94,8 +99,16 @@ class WriteFileTool(Tool):
     }
 
     async def execute(self, args: dict[str, Any], ctx: ToolCtx) -> ToolResult:
-        path = _resolve(args["path"], ctx)
-        content: str = args["content"]
+        raw_path, err = require_str(args, "path")
+        if err is not None:
+            return err
+        raw_content, err = require_str(args, "content", allow_empty=True)
+        if err is not None:
+            return err
+        assert raw_path is not None
+        assert raw_content is not None
+        path = _resolve(raw_path, ctx)
+        content: str = raw_content
         if args.get("create_dirs", True):
             path.parent.mkdir(parents=True, exist_ok=True)
         path.write_text(content, encoding="utf-8")
@@ -192,7 +205,10 @@ class RipgrepTool(Tool):
     }
 
     async def execute(self, args: dict[str, Any], ctx: ToolCtx) -> ToolResult:
-        pattern = args["pattern"]
+        pattern, err = require_str(args, "pattern")
+        if err is not None:
+            return err
+        assert pattern is not None
         try:
             regex = re.compile(pattern)
         except re.error as e:
@@ -268,7 +284,11 @@ class RunShellTool(Tool):
     }
 
     async def execute(self, args: dict[str, Any], ctx: ToolCtx) -> ToolResult:
-        command: str = args["command"]
+        raw_command, err = require_str(args, "command")
+        if err is not None:
+            return err
+        assert raw_command is not None
+        command: str = raw_command
         timeout_sec = float(args.get("timeout_sec", 30))
         proc = await asyncio.create_subprocess_shell(
             command,

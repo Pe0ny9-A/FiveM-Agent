@@ -7,9 +7,9 @@ FiveM 资源插件开发 + 服务器运维治理双线助手。深度熟悉 QBCo
 
 [![PyPI](https://img.shields.io/pypi/v/xuanji-fivem?color=blue)](https://pypi.org/project/xuanji-fivem/)
 [![python](https://img.shields.io/badge/python-3.12+-blue)](https://www.python.org/)
-[![status](https://img.shields.io/badge/status-0.9.2%20alpha-orange)]()
-[![tests](https://img.shields.io/badge/tests-407%20passed-brightgreen)]()
-[![tools](https://img.shields.io/badge/tools-31%20registered-blueviolet)]()
+[![status](https://img.shields.io/badge/status-0.9.3%20alpha-orange)]()
+[![tests](https://img.shields.io/badge/tests-466%20passed-brightgreen)]()
+[![tools](https://img.shields.io/badge/tools-41%20registered-blueviolet)]()
 
 ## 安装
 
@@ -32,7 +32,7 @@ pip install 'xuanji-fivem[vector]'
 
 首次跑 `xuanji init` 走交互式向导：填 API Key、导入 FiveM 种子知识、做一次连通性测试。`xuanji doctor` 全绿后就能日常用。
 
-## 当前进度（0.9.2）
+## 当前进度（0.9.3）
 
 - [x] **M0~M3 全部里程碑闭环**（见 [CHANGELOG.md](CHANGELOG.md)）
 - [x] **0.4 FiveM 专精层** — 项目识别 / 6 套预设 / 静态分析 / 自学习预设
@@ -43,7 +43,8 @@ pip install 'xuanji-fivem[vector]'
 - [x] **0.9.0 ToolFactory 闭环 + published 自动加载**
 - [x] **0.9.1 三家 Provider 各自适配 + 上下文自动压缩**
 - [x] **0.9.2 项目级 XUANJI.md + CLI 状态栏 + 思维链开关 + 会话恢复**
-- [x] **31 个工具** · **CLI 13 个子命令族** · **407 个单测** · **三件套全绿**
+- [x] **0.9.3 全家桶自配置（10 工具）+ 默认 DeepSeek V4 Pro + 代码强化段 + 4 个真实会话 bug 修复**
+- [x] **41 个工具** · **CLI 13 个子命令族** · **466 个单测** · **三件套全绿**
 
 ## 典型使用流程
 
@@ -169,6 +170,7 @@ xuanji                              # 顶层帮助
 | **技能**（procedural） | `save_skill` / `search_skill` / `run_skill` | 写到 `skills` namespace |
 | **Skill 文件**（CC/Codex 互通） | `list_skill_files` / `match_skill_file` / `read_skill_file` | 文件系统级，与 Claude Code 双向迁移 |
 | **项目记忆**（XUANJI.md） | `read_project_memory` / `init_project_memory` | RiskTag.IO，覆盖既有需 `overwrite=true` |
+| **自配置**（0.9.3） | `list_profiles` / `switch_profile` / `show_active_config` / `set_chat_ui` / `set_compaction` / `set_persona_temperature` / `set_alias` / `set_mcp_enabled` / `list_hooks` / `install_hook` | 写工具全部 RiskTag.IO → 司辰阁 HITL |
 | **工具**（Python 代码） | `propose_tool` | **草案落磁盘，玄玑不能自动 publish**——人工 review 后才能成真工具 |
 | **群英会** | `dispatch_subagent` | 召唤 sub-agent（稷下生 / 百工匠 / 司鉴 / 天枢令）跑专项 |
 | **自察** | `list_tools` / `describe_tool` / `list_skills` / `read_skill` | SAFE，零副作用 |
@@ -265,8 +267,39 @@ xuanji project edit
 ```bash
 uv run ruff check xuanji/ tests/    # 0 告警
 uv run mypy xuanji/                 # strict 模式 0 告警
-uv run pytest                       # 407 测试全过
+uv run pytest                       # 466 测试全过
 ```
+
+## 全家桶自配置（0.9.3）
+
+让玄玑用自然语言帮自己改配置——10 个写工具全部走司辰阁 HITL，玄玑改不了任何东西不弹确认。
+
+```
+小宝：姐姐，把 compaction 阈值降到 60k，关掉 thinking 显示，切到 deepseek profile
+玄玑：好，姐姐分三步给你改——
+       set_compaction(max_context_tokens=60000)
+       [Gate 弹卡] 确认调整 max_context_tokens: 80000 → 60000？(y/N)
+小宝：y
+       set_chat_ui(show_thinking=False)
+       [Gate 弹卡] 确认关闭 thinking 显示？(y/N)
+小宝：y
+       switch_profile("deepseek-prod")
+       [Gate 弹卡] 确认切换 profile: anthropic-prod → deepseek-prod？(y/N)
+小宝：y
+玄玑：齐了，下次对话用 DeepSeek，ctx 阈值 60k，thinking 不显示。
+```
+
+涵盖：profile 切换 / 人设温度 / 聊天 UI / compaction / MCP server 启停 / hook 安装。
+
+## 默认 DeepSeek V4 Pro + 代码强化段（0.9.3）
+
+dev / tool-loop 类对话默认走 DeepSeek V4 Pro（如果你配了 DeepSeek profile）。
+玄玑会拼上一段「代码工程素养·V4 Pro 强化段」，让 V4 Pro 在玄玑调度下输出与
+Opus 4.7 / GPT-5.4 同等纪律的代码：写之前先读 / 最小改动 / 不臆造 API /
+闭环验证（Lua 用 luacheck，Python 用 ruff）/ 多轮 tool loop 节奏。
+
+长上下文（200k+）与严苛审查仍走 Anthropic。规划仍走 Anthropic。
+没装 DeepSeek 不影响——router 自动降级到 Anthropic / OpenAI。
 
 ## CLI 对话体验（0.9.2）
 

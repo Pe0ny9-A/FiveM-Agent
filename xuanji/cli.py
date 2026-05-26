@@ -2191,6 +2191,22 @@ def _format_tokens(n: int) -> str:
     return f"{n / 1_000_000:.2f}M"
 
 
+def _resolve_context_window(conductor: Any) -> int:
+    """读取当前 model 的真实上下文窗口（不是压缩阈值）。
+
+    走 provider.capabilities(model) 拿厂商声明的 context_window；任何环节失败兜底到
+    compaction.max_context_tokens——保守选项，至少不会让状态栏的百分比看起来诡异。
+    """
+    try:
+        caps = conductor.ctx.provider.capabilities(conductor.ctx.model)
+        win = int(getattr(caps, "context_window", 0) or 0)
+        if win > 0:
+            return win
+    except Exception:
+        pass
+    return int(conductor.compaction.max_context_tokens)
+
+
 def _print_status_bar(
     *,
     provider: str,
@@ -2200,7 +2216,8 @@ def _print_status_bar(
     totals: dict[str, int],
     turn_count: int,
     history_len: int,
-    max_context_tokens: int,
+    context_window: int,
+    compact_threshold: int,
     show_thinking: bool,
     persona_mode: str,
     persona_temp: str,
@@ -2208,12 +2225,22 @@ def _print_status_bar(
     """对话框下方的状态条。
 
     一行式紧凑布局，按视觉权重分组：
-      [模型/profile] · [本轮 in/out/cache] · [累计 in/out/cache] · [上下文 %] · [N 轮]
+      [模型/profile] · [本轮 in/out/cache] · [累计] · [窗口 %] · [压缩阈值] · [N 轮] · 模式
+
+    `context_window` 是模型真实可吃的最大上下文（如 Sonnet 4.6 = 200k，DeepSeek-V4 = 1M）；
+    `compact_threshold` 是玄玑提前折叠头部的红线，默认 80k——保守得多，避免触底反弹。
+    两个口径分开显示：ctx % 看离窗口上限多近；compact 提示什么时候开始压缩。
     """
     # 用 (input + cache_read 已经计费的部分) 估算上下文占用
     ctx_used = turn_usage.input_tokens + turn_usage.cache_read_tokens
-    ctx_pct = min(100, int(ctx_used * 100 / max_context_tokens)) if max_context_tokens else 0
-    ctx_color = "green" if ctx_pct < 50 else "yellow" if ctx_pct < 85 else "red"
+    win_pct = min(100, int(ctx_used * 100 / context_window)) if context_window else 0
+    win_color = "green" if win_pct < 50 else "yellow" if win_pct < 85 else "red"
+    compact_pct = (
+        min(100, int(ctx_used * 100 / compact_threshold)) if compact_threshold else 0
+    )
+    compact_color = (
+        "green" if compact_pct < 60 else "yellow" if compact_pct < 90 else "red"
+    )
 
     bar = Text()
     bar.append("  ")
@@ -2253,13 +2280,18 @@ def _print_status_bar(
         )
     bar.append(")", style="dim")
     bar.append("  ·  ", style="dim")
-    # 上下文占用
+    # 窗口占用 = 离模型真实上下文上限多远
     bar.append("ctx ", style="dim")
-    bar.append(f"{ctx_pct}%", style=ctx_color)
+    bar.append(f"{win_pct}%", style=win_color)
     bar.append(
-        f" ({_format_tokens(ctx_used)}/{_format_tokens(max_context_tokens)})",
+        f" ({_format_tokens(ctx_used)}/{_format_tokens(context_window)})",
         style="dim",
     )
+    bar.append("  ·  ", style="dim")
+    # 压缩阈值进度 = 离玄玑主动压缩头部的红线多远
+    bar.append("compact ", style="dim")
+    bar.append(f"{compact_pct}%", style=compact_color)
+    bar.append(f"@{_format_tokens(compact_threshold)}", style="dim")
     bar.append("  ·  ", style="dim")
     # 会话进度
     bar.append(f"{turn_count} 轮", style="dim")
@@ -2341,7 +2373,8 @@ def _handle_slash_command(
             totals=totals,
             turn_count=state.get("turn_count", 0),
             history_len=len(conductor.ctx.history),
-            max_context_tokens=conductor.compaction.max_context_tokens,
+            context_window=_resolve_context_window(conductor),
+            compact_threshold=conductor.compaction.max_context_tokens,
             show_thinking=state.get("show_thinking", False),
             persona_mode=conductor.ctx.mode.value,
             persona_temp=conductor.ctx.temperature.value,
@@ -2458,9 +2491,36 @@ async def _chat_loop() -> None:
             "cache_write": 0,
         },
         "profile_name": profile_name,
+        "last_turn_usage": None,
     }
 
+    def _render_pinned_status() -> None:
+        """把状态栏粘到当前光标位置——用户输入框正上方。
+
+        没有打过模型时（last_turn_usage=None），仅显示模型 / 累计 / ctx 的零值版，
+        小宝抬眼就能确认 profile/model/ctx 还是不是预期的。
+        """
+        from xuanji.llm.providers.base import Usage as _Usage
+
+        u = state.get("last_turn_usage") or _Usage()
+        _print_status_bar(
+            provider=conductor.ctx.provider.name,
+            model=conductor.ctx.model,
+            profile_name=state["profile_name"],
+            turn_usage=u,
+            totals=state["totals"],
+            turn_count=state["turn_count"],
+            history_len=len(conductor.ctx.history),
+            context_window=_resolve_context_window(conductor),
+            compact_threshold=conductor.compaction.max_context_tokens,
+            show_thinking=state["show_thinking"],
+            persona_mode=conductor.ctx.mode.value,
+            persona_temp=conductor.ctx.temperature.value,
+        )
+
     while True:
+        # 每轮提示输入前都把状态栏贴一次到输入框上方
+        _render_pinned_status()
         try:
             user_input = console.input(
                 f"[bold cyan]{_ICON_USER}[/bold cyan] "
@@ -2553,20 +2613,7 @@ async def _chat_loop() -> None:
                     totals["output"] += u.output_tokens
                     totals["cache_read"] += u.cache_read_tokens
                     totals["cache_write"] += u.cache_write_tokens
-                    console.print()
-                    _print_status_bar(
-                        provider=conductor.ctx.provider.name,
-                        model=conductor.ctx.model,
-                        profile_name=profile_name,
-                        turn_usage=u,
-                        totals=totals,
-                        turn_count=state["turn_count"],
-                        history_len=len(conductor.ctx.history),
-                        max_context_tokens=conductor.compaction.max_context_tokens,
-                        show_thinking=state["show_thinking"],
-                        persona_mode=conductor.ctx.mode.value,
-                        persona_temp=conductor.ctx.temperature.value,
-                    )
+                    state["last_turn_usage"] = u
                     console.print()
                     # 落盘最新历史，下次启动可恢复（失败不打断对话）
                     with contextlib.suppress(Exception):

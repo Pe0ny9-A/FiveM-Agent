@@ -17,6 +17,7 @@ from typing import Any, ClassVar
 from xuanji.capability.tool import RiskTag, Tool, ToolCtx, ToolError, ToolResult
 from xuanji.memory.models import Memory, MemoryKind, MemoryScope
 from xuanji.memory.store.base import MemoryStore
+from xuanji.tools._args import require_str
 
 SKILLS_NAMESPACE = "skills"
 """技能默认命名空间——跨项目通用。项目专属技能用 'skills.<project>'。"""
@@ -171,7 +172,10 @@ class RunSkillTool(Tool):
         self._store = store
 
     async def execute(self, args: dict[str, Any], ctx: ToolCtx) -> ToolResult:
-        sid = args["id"]
+        sid, err = require_str(args, "id")
+        if err is not None:
+            return err
+        assert sid is not None
         m = self._store.get(sid)
         if m is None:
             for cand in self._store.list_by_namespace(

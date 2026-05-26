@@ -41,6 +41,7 @@ from xuanji.neural import Conductor
 from xuanji.persona import PersonaMode
 from xuanji.tools import (
     builtin_tools,
+    config_tools,
     ingest_tools_offline,
     knowledge_tools,
     load_published_tools,
@@ -124,6 +125,8 @@ class ServerRuntime:
         registry.register_all(fivem_tools(self.scaffold_engine))
         # 项目级记忆：read/init XUANJI.md
         registry.register_all(project_memory_tools())
+        # 全家桶自配置：profile / 人设温度 / 聊天 UI / compaction / MCP / hook
+        registry.register_all(config_tools(self.cfg_store, hooks_dir()))
         # MCP：若 attach_mcp 已跑过，把收编的远程工具一并塞进来
         if self.mcp_registry is not None:
             for adapter in self.mcp_registry.all_adapters():

@@ -2,6 +2,108 @@
 
 所有重要的变更都记在这里。版本号遵守 [SemVer](https://semver.org/lang/zh-CN/)。
 
+## [0.9.3] — 2026-05-26
+
+**全家桶自配置 + 默认 DeepSeek V4 Pro + 代码强化段 + 四个真实会话 bug 修复**。
+
+0.9.3 是从一次 DeepSeek V4 Pro 真实会话里捞出来的反馈版：四个用户实际踩到的坑
+（KeyError / 复读 / ctx% 不准 / 状态栏乱跳）一次修齐，顺手把"让玄玑用自然语言
+帮自己改配置"补上，再把默认路由从 Anthropic 优先改成 DeepSeek 优先——配上一段
+代码工程素养强化 prompt，让 V4 Pro 在玄玑调度下输出和 Opus 4.7 / GPT-5.4 同等
+纪律的代码。
+
+### Fixed · 四个 0.9.2 真实会话 bug
+
+- **#4 KeyError 'path'**：流式工具调用 args 截断时 `args["path"]` 直接抛
+  `KeyError`，玄玑当场崩。新增 [xuanji/tools/_args.py](xuanji/tools/_args.py)
+  共享的 `require_str` / `require_dict` —— 缺字段返回友好的
+  `ToolResult(ok=False, error=...)` 让模型有机会重试，而不是吐 traceback。
+  builtin / factory / ingest / 知识 / 元工具全量切换。
+- **#3 复读**：多轮 tool loop 第二轮模型偶尔逐字复读上一轮句子。两层防护：
+  - system prompt 加「多轮 tool loop 不复读」硬约束
+  - [xuanji/cli.py](xuanji/cli.py) 的 `_PrefixDedup` 流式前缀去重兜底，
+    本轮输出与上轮完整重叠时静默吃掉
+- **#1 ctx% 不准**：状态栏 `ctx 12% (10.1k/80.0k)` 用的是 compaction 阈值
+  当分母，不是真模型上下文窗口。拆成两个概念：
+  - **window %** = 真上下文（按 model 的 max_tokens）
+  - **compact 阈值** = `compaction.max_context_tokens`（什么时候自动折叠）
+  状态栏现在两个都显示，一眼看出"还能塞多少"和"什么时候被折叠"。
+- **#2 状态栏跳来跳去**：状态栏只在每轮回复后渲染一次，用户敲下一条时
+  上一栏被推到屏幕中段。改成每次 `console.input()` 前都重渲染，
+  状态栏永远贴在输入框正上方。
+
+### Added · 全家桶自配置（10 个工具）
+
+让玄玑用自然语言给自己改配置——profile / 人设温度 / 聊天 UI / compaction /
+MCP / hook 全家桶都能聊出来。新模块 [xuanji/tools/config_tools.py](xuanji/tools/config_tools.py)：
+
+| 工具 | Risk | 作用 |
+|---|---|---|
+| `list_profiles` | SAFE | 看所有 profile + 当前激活 |
+| `switch_profile` | IO | 切换激活 profile（HITL 确认） |
+| `show_active_config` | SAFE | 当前 profile / 模式 / compaction / MCP / chat_ui 一览 |
+| `set_chat_ui` | IO | `show_thinking` 开关 |
+| `set_compaction` | IO | `enabled` / `max_context_tokens` / `keep_recent_turns` |
+| `set_persona_temperature` | IO | playful / balanced / professional |
+| `set_alias` | IO | 改 user_alias / assistant_alias |
+| `set_mcp_enabled` | IO | 启停某 MCP server |
+| `list_hooks` | SAFE | 看一个或所有事件的 hook |
+| `install_hook` | IO | 写/追加 YAML hook spec |
+
+所有写工具都标 `RiskTag.IO`——必经司辰阁 HITL，玄玑改不了任何东西不弹确认。
+小宝可以说："姐姐，把 compaction 阈值降到 60k，关掉 thinking 显示，
+切到 deepseek profile"，玄玑会一条条调，每条都要小宝点一次确认。
+
+### Changed · 默认 DeepSeek V4 Pro + 代码强化段
+
+[xuanji/llm/router.py](xuanji/llm/router.py) `default_policies()`：
+
+| 场景 | 0.9.2 | 0.9.3 |
+|---|---|---|
+| `dev` / `tool-loop` | Anthropic → OpenAI | **DeepSeek** → Anthropic → OpenAI |
+| `researcher-tool-loop` | Anthropic | **DeepSeek** → Anthropic |
+| `summary-bulk` | DeepSeek → Anthropic | 不变 |
+| `routing-decision` | DeepSeek → Anthropic | 不变 |
+| `long-context-architecture` | Anthropic → OpenAI | 不变（200k+ 仍走 Opus 1M） |
+| `planning-strategic` | Anthropic → DeepSeek | 不变（规划要看远） |
+| `reviewer-strict` | Anthropic → OpenAI | + DeepSeek 兜底 |
+
+新模块 [xuanji/persona/code_strength.py](xuanji/persona/code_strength.py)：
+按 `(provider, model)` 派发的代码能力强化段，由 [Conductor._system_prompt](xuanji/neural/conductor.py)
+每轮注入。**只对 DeepSeek thinking 模型**（`deepseek-v4-pro` / `deepseek-v4-*` /
+`deepseek-reasoner`）拼上去——Anthropic / OpenAI 自带这层素养，重复加反而干扰；
+legacy `deepseek-chat` 没 thinking，也不强加。
+
+强化段七条工程铁律（基于 V4 Pro 与 Opus 4.7 / GPT-5.4 的实际差距）：
+
+1. 写之前先读：read_file 看一眼现状再 write_file，不许凭印象
+2. 最小改动：bug 只修 bug，不引入超出需求的抽象
+3. 不臆造 API：FiveM / QBCore / ox_lib 的 native / export 不确定先 lookup_symbol
+4. 闭环验证：FiveM Lua 用 `luacheck` / `lua5.4 -bl` 验语法，改 fxmanifest 让小宝
+   `restart <resource>` 看日志；JSON 用 `python -m json.tool` 验；玄玑自身代码
+   （Python）跑 ruff / mypy / pytest 至少一项
+5. 多轮 tool loop 节奏：每轮先消化上一轮结果再决定下一步
+6. 不写解释 WHAT 的注释：好命名已经说清楚的不重复
+7. 工具调用前先看 schema：不熟的工具先 `describe_tool`
+
+### 质量
+
+| | |
+|---|---|
+| 单测 | **466 全过**（407 → 466，+59：27 config_tools + 19 v0.9.3 回归 + 13 router/code_strength） |
+| ruff | **0 告警** |
+| mypy strict | **0 告警** |
+| 工具数 | 静态 41（+ 10 全家桶 config_tools）+ published 动态加载 |
+
+### 升级提示
+
+- 装完直接 `xuanji chat`，dev 类对话默认走 DeepSeek V4 Pro（如果你配了 DeepSeek profile）。
+- 没配 DeepSeek 不影响——router 自动降级到 Anthropic / OpenAI，行为完全等同 0.9.2。
+- 想让玄玑改自己的配置：`xuanji chat` 里直接说 "姐姐，把 thinking 关了" 就行，
+  Gate 会弹出确认面板让你点一下。
+
+---
+
 ## [0.9.2] — 2026-05-26
 
 **项目级 XUANJI.md 项目宪法 + CLI 对话状态栏 + 思维链开关 + 会话恢复**。

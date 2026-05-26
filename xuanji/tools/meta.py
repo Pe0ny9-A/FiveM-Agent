@@ -14,9 +14,10 @@ from __future__ import annotations
 from typing import Any, ClassVar
 
 from xuanji.capability.registry import ToolRegistry
-from xuanji.capability.tool import RiskTag, Tool, ToolCtx, ToolError, ToolResult
+from xuanji.capability.tool import RiskTag, Tool, ToolCtx, ToolResult
 from xuanji.memory.models import MemoryKind, MemoryScope
 from xuanji.memory.store.base import MemoryStore
+from xuanji.tools._args import require_str
 
 
 class ListToolsTool(Tool):
@@ -79,9 +80,10 @@ class DescribeToolTool(Tool):
         self._registry = registry
 
     async def execute(self, args: dict[str, Any], ctx: ToolCtx) -> ToolResult:
-        name = args.get("name")
-        if not name:
-            raise ToolError("name 不能为空")
+        name, err = require_str(args, "name")
+        if err is not None:
+            return err
+        assert name is not None
         tool = self._registry.get(name)
         if tool is None:
             return ToolResult(ok=False, error=f"工具不存在：{name}")
@@ -160,8 +162,10 @@ class ReadSkillTool(Tool):
         self._store = store
 
     async def execute(self, args: dict[str, Any], ctx: ToolCtx) -> ToolResult:
-        sid = args["id"]
-        # 先尝试精确
+        sid, err = require_str(args, "id")
+        if err is not None:
+            return err
+        assert sid is not None
         m = self._store.get(sid)
         if m is None:
             # 模糊：在 skills namespace 找前缀匹配

@@ -20,6 +20,7 @@ from xuanji.capability.tool import RiskTag, Tool, ToolCtx, ToolError, ToolResult
 from xuanji.knowledge.chunker import chunk_markdown
 from xuanji.knowledge.models import Chunk, Source, Symbol
 from xuanji.knowledge.store.base import KnowledgeStore
+from xuanji.tools._args import require_str
 
 
 def _stable_id(*parts: str) -> str:
@@ -103,11 +104,24 @@ class IngestTextTool(Tool):
         self._store = store
 
     async def execute(self, args: dict[str, Any], ctx: ToolCtx) -> ToolResult:
-        ns = (args.get("namespace") or "").strip()
-        title = (args.get("source_title") or "").strip()
-        text = args.get("text") or ""
+        ns_str, err = require_str(args, "namespace")
+        if err is not None:
+            return err
+        title_str, err = require_str(args, "source_title")
+        if err is not None:
+            return err
+        text_str, err = require_str(args, "text")
+        if err is not None:
+            return err
+        assert ns_str is not None and title_str is not None and text_str is not None
+        ns = ns_str.strip()
+        title = title_str.strip()
+        text = text_str
         if not ns or not title or not text.strip():
-            raise ToolError("namespace / source_title / text 都不能为空")
+            return ToolResult(
+                ok=False,
+                error="namespace / source_title / text 都不能为空白。",
+            )
         n = _ingest_chunks(
             self._store,
             namespace=ns,
@@ -158,7 +172,13 @@ class IngestFileTool(Tool):
         self._store = store
 
     async def execute(self, args: dict[str, Any], ctx: ToolCtx) -> ToolResult:
-        raw_path = args["path"]
+        raw_path, err = require_str(args, "path")
+        if err is not None:
+            return err
+        namespace, err = require_str(args, "namespace")
+        if err is not None:
+            return err
+        assert raw_path is not None and namespace is not None
         p = Path(raw_path)
         if not p.is_absolute():
             p = ctx.project_root / p
@@ -175,7 +195,7 @@ class IngestFileTool(Tool):
         title = args.get("source_title") or p.name
         n = _ingest_chunks(
             self._store,
-            namespace=args["namespace"],
+            namespace=namespace,
             source_title=title,
             text=text,
             url=str(p),
@@ -184,7 +204,7 @@ class IngestFileTool(Tool):
             ok=True,
             output={
                 "path": str(p),
-                "namespace": args["namespace"],
+                "namespace": namespace,
                 "source_title": title,
                 "chunks_written": n,
                 "truncated": p.stat().st_size > max_bytes,
@@ -247,8 +267,13 @@ class UpsertSymbolTool(Tool):
         self._store = store
 
     async def execute(self, args: dict[str, Any], ctx: ToolCtx) -> ToolResult:
-        ns = args["namespace"]
-        name = args["name"]
+        ns, err = require_str(args, "namespace")
+        if err is not None:
+            return err
+        name, err = require_str(args, "name")
+        if err is not None:
+            return err
+        assert ns is not None and name is not None
         sym = Symbol(
             id=f"{ns}::{name}",
             namespace=ns,

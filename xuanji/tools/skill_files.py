@@ -15,6 +15,7 @@ from typing import Any, ClassVar
 
 from xuanji.capability.tool import RiskTag, Tool, ToolCtx, ToolError, ToolResult
 from xuanji.skills import SkillsLoader
+from xuanji.tools._args import require_str
 
 
 class _LoaderHolder:
@@ -82,7 +83,10 @@ class ReadSkillFileTool(Tool):
         self._holder = holder
 
     async def execute(self, args: dict[str, Any], ctx: ToolCtx) -> ToolResult:
-        name = args["name"]
+        name, err = require_str(args, "name")
+        if err is not None:
+            return err
+        assert name is not None
         skill = self._holder.loader.get(name)
         if skill is None:
             raise ToolError(f"找不到名为 {name!r} 的 skill")
@@ -122,7 +126,11 @@ class MatchSkillFileTool(Tool):
         self._holder = holder
 
     async def execute(self, args: dict[str, Any], ctx: ToolCtx) -> ToolResult:
-        hits = self._holder.loader.match(args["query"])
+        query, err = require_str(args, "query")
+        if err is not None:
+            return err
+        assert query is not None
+        hits = self._holder.loader.match(query)
         return ToolResult(
             ok=True,
             output=[
@@ -131,7 +139,7 @@ class MatchSkillFileTool(Tool):
                     "description": s.frontmatter.description,
                     "matched_triggers": [
                         t for t in s.frontmatter.triggers
-                        if t.lower() in args["query"].lower()
+                        if t.lower() in query.lower()
                     ],
                 }
                 for s in hits
