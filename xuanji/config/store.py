@@ -15,9 +15,10 @@ from pathlib import Path
 
 from pydantic import BaseModel, Field
 
-from core.config.paths import config_file_path
-from core.config.profiles import Profile
-from core.persona.modes import PersonaTemperature
+from xuanji.config.paths import config_file_path
+from xuanji.config.profiles import Profile
+from xuanji.mcp.registry import McpServerConfig
+from xuanji.persona.modes import PersonaTemperature
 
 
 class XuanjiConfig(BaseModel):
@@ -33,6 +34,10 @@ class XuanjiConfig(BaseModel):
     user_alias: str = Field(default="小宝", min_length=1, max_length=16)
     assistant_alias: str = Field(default="姐姐", min_length=1, max_length=16)
     profiles: dict[str, Profile] = Field(default_factory=dict)
+    mcp_servers: list[McpServerConfig] = Field(
+        default_factory=list,
+        description="收编的 MCP server 列表。启动时 ServerRuntime 会拉起 enabled 的",
+    )
 
     def get_active(self) -> Profile | None:
         """返回当前激活的 profile，未设置或不存在时返回 None。"""
@@ -117,3 +122,30 @@ class ConfigStore:
         if assistant_alias is not None:
             cfg.assistant_alias = assistant_alias
         self.save(cfg)
+
+    # ------------------------------ MCP server ------------------------------
+
+    def upsert_mcp_server(self, server: McpServerConfig) -> None:
+        """新增或按 name 覆盖 MCP server 配置。"""
+        cfg = self.load()
+        cfg.mcp_servers = [s for s in cfg.mcp_servers if s.name != server.name]
+        cfg.mcp_servers.append(server)
+        self.save(cfg)
+
+    def remove_mcp_server(self, name: str) -> bool:
+        cfg = self.load()
+        before = len(cfg.mcp_servers)
+        cfg.mcp_servers = [s for s in cfg.mcp_servers if s.name != name]
+        if len(cfg.mcp_servers) == before:
+            return False
+        self.save(cfg)
+        return True
+
+    def set_mcp_enabled(self, name: str, enabled: bool) -> bool:
+        cfg = self.load()
+        for s in cfg.mcp_servers:
+            if s.name == name:
+                s.enabled = enabled
+                self.save(cfg)
+                return True
+        return False

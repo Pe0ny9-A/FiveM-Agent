@@ -13,10 +13,10 @@ from typing import Any
 
 import pytest
 
-from core.capability.registry import ToolRegistry
-from core.capability.tool import ToolCtx
-from core.config import DeepSeekProfile
-from core.ensemble import (
+from xuanji.capability.registry import ToolRegistry
+from xuanji.capability.tool import ToolCtx
+from xuanji.config import DeepSeekProfile
+from xuanji.ensemble import (
     CODER_ROLE,
     RESEARCHER_ROLE,
     REVIEWER_ROLE,
@@ -24,16 +24,16 @@ from core.ensemble import (
     SubAgent,
     builtin_roles,
 )
-from core.ensemble.supervisor import ListRolesTool
-from core.llm.providers.base import (
+from xuanji.ensemble.supervisor import ListRolesTool
+from xuanji.llm.providers.base import (
     AssistantMessage,
     Delta,
     LLMProvider,
     Message,
     ModelCapabilities,
 )
-from core.tools import builtin_tools
-from core.tools.tool_factory import (
+from xuanji.tools import builtin_tools
+from xuanji.tools.tool_factory import (
     FactoryRegistry,
     FactoryStatus,
     ToolFactory,
@@ -46,16 +46,39 @@ from core.tools.tool_factory import (
 
 
 def test_builtin_roles_have_expected_set() -> None:
+    """0.6 起：四角色对应玄玑四个子系统。"""
     roles = builtin_roles()
-    assert set(roles.keys()) == {"researcher", "coder", "reviewer"}
+    assert set(roles.keys()) == {"稷下生", "百工匠", "司鉴", "天枢令"}
+
+
+def test_role_aliases_resolve() -> None:
+    """旧英文别名应能解析到新中文正名。"""
+    from xuanji.ensemble.roles import resolve_role_name
+
+    roles = builtin_roles()
+    assert resolve_role_name("researcher", roles) == "稷下生"
+    assert resolve_role_name("coder", roles) == "百工匠"
+    assert resolve_role_name("reviewer", roles) == "司鉴"
+    assert resolve_role_name("planner", roles) == "天枢令"
+    assert resolve_role_name("ghost", roles) is None
 
 
 def test_role_tool_whitelists() -> None:
-    """三角色的 allowed_tools 设计要点：reviewer 不能写文件。"""
+    """四角色的 allowed_tools 设计要点：司鉴 / 天枢令 都不能写文件。"""
     assert "write_file" not in REVIEWER_ROLE.allowed_tools
     assert "run_shell" not in REVIEWER_ROLE.allowed_tools
     assert "write_file" in CODER_ROLE.allowed_tools
     assert "knowledge_search" in RESEARCHER_ROLE.allowed_tools
+
+
+def test_tianshu_role_planner_only() -> None:
+    """天枢令只规划不实施——不能写文件。"""
+    from xuanji.ensemble.roles import TIANSHU_ROLE
+
+    assert "write_file" not in TIANSHU_ROLE.allowed_tools
+    assert "run_shell" not in TIANSHU_ROLE.allowed_tools
+    assert "knowledge_search" in TIANSHU_ROLE.allowed_tools
+    assert "planner" in TIANSHU_ROLE.aliases
 
 
 @pytest.mark.asyncio
@@ -65,7 +88,7 @@ async def test_list_roles_tool(tmp_path: Path) -> None:
     res = await tool.execute({}, ctx)
     assert res.ok
     names = {r["name"] for r in res.output}
-    assert names == {"researcher", "coder", "reviewer"}
+    assert names == {"稷下生", "百工匠", "司鉴", "天枢令"}
 
 
 # ----------------- SubAgent 集成 -----------------
@@ -112,7 +135,7 @@ async def test_subagent_runs_to_completion(
         ],
     ]
     monkeypatch.setattr(
-        "core.ensemble.subagent.build_provider",
+        "xuanji.ensemble.subagent.build_provider",
         lambda _p: _FakeProvider(rounds),
     )
 
@@ -138,7 +161,7 @@ async def test_subagent_filters_tools_by_role(
 ) -> None:
     """SubAgent 的 registry 应只包含 role.allowed_tools 列出的工具。"""
     monkeypatch.setattr(
-        "core.ensemble.subagent.build_provider",
+        "xuanji.ensemble.subagent.build_provider",
         lambda _p: _FakeProvider([[Delta(type="message_done", stop_reason="end_turn")]]),
     )
     master = ToolRegistry()
@@ -163,10 +186,10 @@ async def test_dispatch_subagent_tool_unknown_role(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path,
 ) -> None:
     """未知 role 应抛 ToolError。"""
-    from core.capability.tool import ToolError
+    from xuanji.capability.tool import ToolError
 
     monkeypatch.setattr(
-        "core.ensemble.subagent.build_provider",
+        "xuanji.ensemble.subagent.build_provider",
         lambda _p: _FakeProvider([[Delta(type="message_done", stop_reason="end_turn")]]),
     )
     master = ToolRegistry()
@@ -193,7 +216,7 @@ async def test_dispatch_subagent_tool_runs(
         ],
     ]
     monkeypatch.setattr(
-        "core.ensemble.subagent.build_provider",
+        "xuanji.ensemble.subagent.build_provider",
         lambda _p: _FakeProvider(rounds),
     )
     master = ToolRegistry()
@@ -210,7 +233,8 @@ async def test_dispatch_subagent_tool_runs(
         {"role": "researcher", "brief": "随便查点东西"}, ctx,
     )
     assert res.ok
-    assert res.output["role"] == "researcher"
+    # role 输入是别名，输出是中文正名
+    assert res.output["role"] == "稷下生"
     assert res.output["final_text"] == "子任务完成"
 
 
@@ -432,7 +456,7 @@ async def test_factory_generate_extracts_two_blocks(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path,
 ) -> None:
     """factory.generate 调 LLM 后应把两段代码切到 staged/。"""
-    from core.llm.providers.base import TextBlock, Usage
+    from xuanji.llm.providers.base import TextBlock, Usage
 
     fake_response = AssistantMessage(
         blocks=[
@@ -440,7 +464,7 @@ async def test_factory_generate_extracts_two_blocks(
                 text=(
                     "好的，姐姐生成代码：\n"
                     "```python:tool\n"
-                    "from core.capability.tool import Tool\n"
+                    "from xuanji.capability.tool import Tool\n"
                     "class FakeTool: pass\n"
                     "```\n"
                     "```python:test\n"
@@ -470,7 +494,7 @@ async def test_factory_generate_extracts_two_blocks(
             yield Delta(type="message_done", stop_reason="end_turn")
 
     monkeypatch.setattr(
-        "core.tools.tool_factory.build_provider",
+        "xuanji.tools.tool_factory.build_provider",
         lambda _p: FakeProviderForGen(),
     )
 
@@ -511,7 +535,7 @@ async def test_factory_generate_rejects_bad_format(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path,
 ) -> None:
     """LLM 输出格式不对时应抛 ValueError，不能创建空文件。"""
-    from core.llm.providers.base import TextBlock, Usage
+    from xuanji.llm.providers.base import TextBlock, Usage
 
     bad_response = AssistantMessage(
         blocks=[TextBlock(text="just some prose without code blocks")],
@@ -536,7 +560,7 @@ async def test_factory_generate_rejects_bad_format(
             yield Delta(type="message_done", stop_reason="end_turn")
 
     monkeypatch.setattr(
-        "core.tools.tool_factory.build_provider",
+        "xuanji.tools.tool_factory.build_provider",
         lambda _p: FakeProviderBad(),
     )
 

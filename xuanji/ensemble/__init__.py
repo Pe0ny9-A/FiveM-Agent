@@ -10,15 +10,15 @@ M3 阶段先实装监督式（Supervisor + Sub-agent），合议式（Council + 
 留 stub。
 """
 
-from core.ensemble.roles import (
+from xuanji.ensemble.roles import (
     CODER_ROLE,
     RESEARCHER_ROLE,
     REVIEWER_ROLE,
     Role,
     builtin_roles,
 )
-from core.ensemble.subagent import SubAgent, SubAgentResult
-from core.ensemble.supervisor import DispatchSubagentTool
+from xuanji.ensemble.subagent import SubAgent, SubAgentResult
+from xuanji.ensemble.supervisor import DispatchSubagentTool
 
 __all__ = [
     "CODER_ROLE",

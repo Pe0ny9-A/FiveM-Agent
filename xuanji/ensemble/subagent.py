@@ -16,15 +16,15 @@ from typing import Any
 
 from pydantic import BaseModel, Field
 
-from core.body.sandbox import InProcSandbox, Sandbox
-from core.capability.registry import ToolRegistry
-from core.capability.tool import ToolCtx
-from core.config.profiles import Profile
-from core.ensemble.roles import Role
-from core.gate.bridge import HITLBridge, NoOpHITLBridge
-from core.gate.interceptor import GateInterceptor, GateRefusal
-from core.gate.policy import Policy
-from core.llm.providers.base import (
+from xuanji.body.sandbox import InProcSandbox, Sandbox
+from xuanji.capability.registry import ToolRegistry
+from xuanji.capability.tool import ToolCtx
+from xuanji.config.profiles import Profile
+from xuanji.ensemble.roles import Role
+from xuanji.gate.bridge import HITLBridge, NoOpHITLBridge
+from xuanji.gate.interceptor import GateInterceptor, GateRefusal
+from xuanji.gate.policy import Policy
+from xuanji.llm.providers.base import (
     Delta,
     LLMProvider,
     Message,
@@ -32,8 +32,8 @@ from core.llm.providers.base import (
     ToolCallBlock,
     ToolResultBlock,
 )
-from core.llm.providers.factory import build_provider
-from core.tools.meta import ListToolsTool
+from xuanji.llm.providers.factory import build_provider
+from xuanji.tools.meta import ListToolsTool
 
 
 class SubAgentResult(BaseModel):
@@ -94,7 +94,7 @@ class SubAgent:
 
     async def run(self, brief: str) -> SubAgentResult:
         """执行一次性任务，返回最终结果。"""
-        from core.capability.tool import (
+        from xuanji.capability.tool import (
             tool_to_anthropic_schema,
             tool_to_openai_schema,
         )
@@ -182,7 +182,7 @@ class SubAgent:
                     continue
                 result = await self.sandbox.run(tool, tc["args"], ctx)
                 tool_calls_made += 1
-                from core.neural.conductor import _stringify_output
+                from xuanji.neural.conductor import _stringify_output
 
                 result_blocks.append(
                     ToolResultBlock(
