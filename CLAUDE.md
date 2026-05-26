@@ -90,7 +90,7 @@ uv run xuanji config use <name>  # 切换 profile
 uv run xuanji chat             # 进入对话
 ```
 
-## 当前进度（截至 0.3.0）
+## 当前进度（截至 0.5.0）
 
 - [x] M0 骨架 + 三家 LLM Provider + 配置系统 + 玄玑人设
 - [x] 天枢台 Conductor 多轮 tool loop + reflux + audit
@@ -98,14 +98,26 @@ uv run xuanji chat             # 进入对话
 - [x] 稷下学宫 SQLite FTS5 + jieba 中文分词 + 向量混合检索 + 5 套种子
 - [x] 怀玉阁 SQLite 三层 scope × 三类 kind + 衰减 Reflux
 - [x] 0.2 自演化：21 工具（meta/memory/ingest/skill/factory）
-- [x] **0.3 群英会**：Supervisor + 3 角色（researcher/coder/reviewer）+ dispatch_subagent
-- [x] **0.3 爬虫**：BFS + 增量 + crawl_site 工具（NET → HITL）
-- [x] **0.3 ToolFactory**：propose → generate(LLM) → test(subprocess) → publish 四步
-- [x] **0.3 FastAPI 服务**：WebSocket 流式聊天 + REST CRUD + WebSocketHITL 桥
-- [x] **0.3 Web 前端**：嵌入式单页 HTML（暗色主题 + 工具事件 + HITL 弹卡）
-- [x] **0.3 Tauri 桌面**：apps/desktop 配置 + 自启 Python 后端
-- [x] CLI：`info` / `chat` / `serve` / `config` / `knowledge` / `memory` / `skill` / `tool`
-- [x] 质量门：ruff/mypy strict/pytest 三件套全绿，**173 单测 / 23 工具**
+- [x] 0.3 群英会：Supervisor + 3 角色（researcher/coder/reviewer）+ dispatch_subagent
+- [x] 0.3 爬虫：BFS + 增量 + crawl_site 工具（NET → HITL）
+- [x] 0.3 ToolFactory：propose → generate(LLM) → test(subprocess) → publish 四步
+- [x] 0.3 FastAPI 服务：WebSocket 流式聊天 + REST CRUD + WebSocketHITL 桥
+- [x] 0.3 Web 前端：嵌入式单页 HTML（暗色主题 + 工具事件 + HITL 弹卡）
+- [x] 0.3 Tauri 桌面：apps/desktop 配置 + 自启 Python 后端
+- [x] 0.4 FiveM 专精层：detector / analyzer / 6 套 builtin 预设 / 自学习预设
+- [x] **0.5 IPC 子系统**：LSP 风格 stdio JSON-RPC + 22 RPC 方法 + `xuanji ipc` 入口
+- [x] **0.5 VS Code 插件**：apps/vscode 独立插件，状态栏 / 命令面板五件套 / 三栏仪表盘
+- [x] CLI：`info` / `chat` / `serve` / `ipc` / `config` / `knowledge` / `memory` / `skill` / `tool` / `fivem` / `preset`
+- [x] 质量门：ruff/mypy strict/pytest 三件套全绿，**224 单测 / 26 工具**
+
+### 0.5.0 关键设计
+
+**stdio JSON-RPC = LSP 风格 + 复用 ServerRuntime**：IPC 不是新调度，
+就是把 ServerRuntime 已有的 store / scaffold / registry 暴露成 22 个 RPC method。
+CLI / FastAPI / IPC 三个入口共享同一个内核，零分叉。
+
+**插件零模型依赖**：apps/vscode 不直接调 LLM——所有调用都走 stdio。
+LLM 客户端（Claude Code 等）该用啥用啥，玄玑插件提供项目识别 / 知识库 / 记忆 / 预设管理这些"工具栏"能力。
 
 ### 0.3.0 关键设计
 
@@ -124,6 +136,12 @@ production registry。
 ```bash
 # 启动 FastAPI 服务（Web/桌面共享内核）
 uv run xuanji serve
+
+# 启动 stdio JSON-RPC 后端（VS Code 插件 / Tauri 桌面接的就是这个）
+uv run xuanji ipc
+
+# VS Code 插件（开发期）
+cd apps/vscode && pnpm install && pnpm run build  # 然后 F5 启动
 
 # 桌面端（需 Rust + Node）
 cd apps/desktop && pnpm tauri dev

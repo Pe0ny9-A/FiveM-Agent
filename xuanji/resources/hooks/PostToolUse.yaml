@@ -1,0 +1,20 @@
+# 玄玑示范 hook：PostToolUse 观察
+#
+# PostToolUse 不能拒绝（已经跑完了），仅做观察、日志、统计。
+# 错误也吃掉：hook 故障不影响主流程。
+
+hooks:
+  # 规则 1：run_shell 跑完打个统计行到 stderr，便于你 grep
+  - matcher: run_shell
+    description: run_shell 跑完后把命令落到 stderr 一行
+    timeout: 5
+    command: |
+      python -c "import sys, json; d=json.load(sys.stdin); cmd=str((d.get('args') or {}).get('command') or ''); print(f'[hook][post] run_shell: {cmd[:120]}', file=sys.stderr)"
+
+  # 规则 2：所有 write_file 完成后，把路径追加到一个本地审计文件
+  # 取消注释即可启用（注意 Linux/macOS 下用 ~ ，Windows 下改成 %APPDATA%）
+  # - matcher: write_file
+  #   description: 把所有写入的文件路径追加到 ~/.xuanji-write-audit.log
+  #   timeout: 5
+  #   command: |
+  #     python -c "import sys, os, json, time; d=json.load(sys.stdin); p=str((d.get('args') or {}).get('path') or ''); log=os.path.expanduser('~/.xuanji-write-audit.log'); open(log,'a',encoding='utf-8').write(f'{time.strftime(\"%F %T\")} {p}\n') if p else None"

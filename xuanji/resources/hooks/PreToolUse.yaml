@@ -1,0 +1,33 @@
+# 玄玑示范 hook：PreToolUse 拦截规则
+#
+# 这套规则用 Python 脚本（跨平台）做决策。
+# - hook 的 stdin 拿到 payload JSON；玄玑 Conductor 会塞 {tool, args, ...}
+# - exit 0 = 放行；exit 2 或 stdout 打 {"decision":"deny", "reason":"..."} = 拒绝
+# - 命令是完整 shell 命令——这里我们用 python -c '<内联脚本>'
+#
+# 想试效果：
+#   xuanji hook explain --event PreToolUse --tool run_shell
+#   xuanji hook test --event PreToolUse --tool run_shell --payload '{"args":{"command":"rm -rf /"}}'
+
+hooks:
+  # 规则 1：run_shell 里出现 rm -rf 直接拒绝（即便 Gate 已经会拦，hook 是第二道）
+  - matcher: run_shell
+    description: 拒绝 run_shell 里的 rm -rf 等粗暴破坏命令
+    timeout: 5
+    command: |
+      python -c "import sys, json; d=json.load(sys.stdin); cmd=str((d.get('args') or {}).get('command') or ''); banned=['rm -rf /','rm -rf /*','del /F /S /Q','format ','dd if=','mkfs.']; hit=next((b for b in banned if b in cmd), None); print(json.dumps({'decision':'deny','reason':f'命中黑名单: {hit}'})) if hit else None"
+
+  # 规则 2：write_file 写 .env / 凭证文件警告（不拦截，仅打 stderr）
+  - matcher: write_file
+    description: 写 .env / credentials 时打个 warning 让用户看到
+    timeout: 5
+    command: |
+      python -c "import sys, json; d=json.load(sys.stdin); p=str((d.get('args') or {}).get('path') or ''); danger=any(p.endswith(s) for s in ['.env','.env.local','credentials.json','secrets.json']); print(f'[hook] 注意：正在写敏感文件 {p}', file=sys.stderr) if danger else None"
+
+  # 规则 3：所有 ingest_url 必须走 cfx 官方域名（演示用）
+  # 取消注释即可启用——默认放着不开
+  # - matcher: ingest_url
+  #   description: 限制只能从 docs.fivem.net / overextended.dev / docs.qbcore.org 抓
+  #   timeout: 5
+  #   command: |
+  #     python -c "import sys, json; d=json.load(sys.stdin); url=str((d.get('args') or {}).get('url') or ''); allow=['docs.fivem.net','overextended.dev','docs.qbcore.org']; ok=any(a in url for a in allow); print(json.dumps({'decision':'deny','reason':f'URL {url} 不在白名单'})) if not ok else None"

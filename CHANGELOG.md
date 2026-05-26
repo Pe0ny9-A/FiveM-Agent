@@ -2,6 +2,280 @@
 
 所有重要的变更都记在这里。版本号遵守 [SemVer](https://semver.org/lang/zh-CN/)。
 
+# 玄玑 · CHANGELOG
+
+所有重要的变更都记在这里。版本号遵守 [SemVer](https://semver.org/lang/zh-CN/)。
+
+## [0.8.0] — 2026-05-26
+
+**真 LanceDB 接入 + Hooks `--explain` dry-run 模式 + 内置示范 skill/hook 一键安装**。
+0.7 把跨家互通打通后，0.8 把"向量库长出来 + 配置可调试 + 用户开箱即用"补齐。
+**首次公开 PyPI 发版**：包名 `xuanji-fivem`（`xuanji` 已被占）。
+
+### Added · 真 LanceDB
+
+- `xuanji/knowledge/vector.py::LanceDBVectorStore`：full implementation
+  - schema：`id TEXT, vector FixedSizeList<float32, dim>, namespace TEXT, metadata JSON_TEXT`
+  - upsert 用 `merge_insert("id").when_matched_update_all().when_not_matched_insert_all()`
+  - search 转 `score = 1.0 / (1.0 + dist)`（L2 距离 → 越大越相关）
+  - delete / delete_namespace 走 SQL DELETE
+- 新 optional extra：`pip install 'xuanji-fivem[vector]'` 启用 lancedb + pyarrow
+- import 延迟到 `__init__`，没装就抛 ImportError 并给出安装提示
+- `ServerRuntime` 加 `vector_backend` 参数 + 工厂方法 `_make_vector_store`，
+  默认读 `XUANJI_VECTOR_BACKEND` env，ImportError 自动 fallback InMemory
+- 新增 `xuanji knowledge reindex-vectors --backend lancedb` CLI 用于重建索引
+- `xuanji/config/paths.py::vector_db_path()` 嵌入式数据目录（`data/vectors/`）
+
+**关键坑**：`_ensure_table` 不能用 `list_tables()` 判存在再 create——同目录跨实例时
+`list_tables()` 不立刻看见新建的表，会触发 `Table 't' already exists`。改成 try
+`open_table` 失败再 create。
+
+### Added · Hooks `--explain` dry-run
+
+- `HookExplanation = (spec, matched: bool, reason: str, can_deny: bool)`
+  事前告诉「现在这个工具调用 / 这条 user prompt 会触发哪些 hook 以及为什么」
+- **只有 PreToolUse 的 `can_deny=True`**——其他事件即使匹配也只是观察
+- reason 文案区分事件：tool 事件说「matcher 'X' 匹配 tool 'Y'」；
+  UserPromptSubmit 说「子串 'X' 在 prompt 中存在」
+- CLI 四件套（`xuanji hook` Typer group）：
+  - `path` — 打印 hooks 目录
+  - `list` — 按事件列全部 spec
+  - `explain --event PreToolUse --tool run_shell` — 干跑分析
+  - `test --event ... --tool ... --payload-json '{...}'` — 真跑一次 hook
+
+### Added · 内置示范 skill / hook + install-samples
+
+- 新模块 `xuanji.resources` 暴露 `SAMPLE_SKILLS_DIR / SAMPLE_HOOKS_DIR`
+  与 `list_sample_skills() / list_sample_hooks()`
+- 3 个 skill（`xuanji/resources/skills/`）：
+  - `qbox-add-useable-item.md` — QBox CreateUseableItem + ox_inventory 注册可使用物品
+  - `ox-lib-callback.md` — `lib.callback.register` / `lib.callback.await` client/server 双侧
+  - `fxmanifest-audit.md` — fxmanifest.lua review checklist（mode: review / role_hint: 司鉴）
+- 3 个 hook（`xuanji/resources/hooks/`）：
+  - `PreToolUse.yaml` — `rm -rf /` 黑名单（python -c 内嵌脚本，跨平台）+ `.env` 写入警告
+  - `PostToolUse.yaml` — run_shell 命令日志到 stderr
+  - `UserPromptSubmit.yaml` — 「部署 / 生产 / QBox」substring 提示
+- CLI 一键拷贝：`xuanji skill-file install-samples` / `xuanji hook install-samples`
+  默认不覆盖已有文件，`--force` 强制覆盖
+
+### Changed · 公开 PyPI 发版
+
+- 包名：`xuanji` → `xuanji-fivem`（PyPI 上 `xuanji` 已被占）
+- `xuanji/__init__.py::__version__` 改为从 `importlib.metadata` 动态读取，
+  单点真源——以后改版本号只动 `pyproject.toml` 一处
+- `pyproject.toml` 加完整 PyPI 元数据：homepage / repository / issues / changelog
+- `docs/packaging.md` 重写：删掉「内部团队工具，绝不上 PyPI」的旧约束
+
+### Quality
+
+- ruff / mypy strict 全绿（**92 源文件 0 告警**）
+- pytest **337 全过**（315 → 337，+9 LanceDB 真实装单测 + +4 hook explain
+  + +10 resources，删 1 旧 stub 测试）
+- 工具总数 **29 个**（不变；本轮无新工具，只新增 CLI 命令组）
+
+### Design highlights
+
+**为什么核心包不依赖 lancedb**：lancedb 含 PyArrow + Lance Rust binding，
+轮询大、装慢。InMemoryVectorStore 仍是默认（零依赖、单测必备），LanceDB 作为
+optional `vector` extra；调用方 ImportError 自动 fallback——按需付费。
+
+**为什么 `--explain` 重要**：hook 配错时只能干瞪眼是 0.7 的痛点。0.8 的
+`HookExplanation` 把 matcher 评估全摊开——matched 的解释「为什么命中」、
+没 matched 的解释「为什么没命中」、Pre/Post/UserPrompt 的 can_deny 差异
+也讲清楚。配前先 `explain` 一遍，配错的概率掉到很低。
+
+**为什么示范资源放 `xuanji/resources/` 不是 `data/`**：`data/` 是用户运行时
+目录（数据库 / 索引 / 用户配置），不应该承载源码资产。`xuanji/resources/` 走 hatch
+`packages` 自动打进 wheel，`pip install` 即得，`install-samples` 命令负责拷贝
+到用户的 `data/skills` 与 `data/hooks`。
+
+---
+
+## [0.7.0] — 2026-05-26
+
+**互通四件套**：Subprocess Sandbox + MCP Server + Skills + Hooks。0.6 解决了
+"能用别家工具 + 异构路由"，0.7 把另一半补上——"让别家也能用玄玑的工具" +
+"跟 CC/Codex 互拷 skill / hook 文件而无需改格式"。
+
+### Added · Subprocess Sandbox
+
+opt-in 子进程隔离。Tool 基类加 `is_subprocess_safe: ClassVar[bool] = False`，
+显式标 True 才进 SubprocessSandbox，否则 RoutingSandbox 回退 InProc。
+
+- `xuanji/body/sandbox/subproc_runner.py`：从 stdin 读 `{module, qualname, args, ctx}`，
+  import 工具，跑 execute，stdout 吐 ToolResult JSON
+  - **Windows 上必须 `_force_utf8()` reconfigure stdin/stdout/stderr**，
+    不然中文 stdout 就是 `���`
+- `xuanji/body/sandbox/subprocess.py`：parent 用 `asyncio.wait_for + proc.kill()`
+  兜底超时；`_utf8_env()` 注入 `PYTHONUTF8=1` + `PYTHONIOENCODING=utf-8`
+- `RoutingSandbox(inproc=, subprocess=)` 按 flag 路由
+- `RunShellTool` 标了 `is_subprocess_safe = True` 作为示范
+
+### Added · MCP Server 端
+
+把玄玑 26+ 工具暴露给 CC / Codex / 任意 MCP-spec-compliant 客户端。
+
+- `xuanji/mcp/server.py::McpServer`：单消息可测入口 `process_message` + `run_stdio` loop
+- 复用 `ServerRuntime.build_registry` → 工具一致性零成本
+- Gate 仍生效：`risk >= EXEC` 的工具走 NoOpHITLBridge 直接 deny
+  （不能让 MCP 客户端无 HITL 触发高危）
+- 错码：-32700 / -32601 / -32602 / -32603 严格按 JSON-RPC 2.0 spec
+- stdio 是 **NDJSON**——**不复用** `xuanji/ipc/framing.py` 的 LSP Content-Length 分帧
+- `xuanji mcp-serve` 命令启动前 set_utf8_stdio()
+
+### Added · Skills 子系统
+
+markdown + YAML frontmatter，**直接拷自 / 拷给 Claude Code、Codex 都能用**。
+
+- 标准字段（CC/Codex 兼容）：`name / description / triggers / tools / allowed_tools`
+- 玄玑扩展：`metadata.xuanji.{mode, temperature, risk_floor, role_hint}`，
+  CC/Codex 看见 ignore
+- `SkillsLoader.all() / get(name) / match(query)`
+  - **方法名是 `all()` 不是 `list()`**——避免在 class body 里 shadow `list[T]`
+    类型注解被 mypy 当成方法引用
+- 三个工具：`list_skill_files / read_skill_file / match_skill_file`，全 SAFE
+- `data_dir() / "skills" / *.md` 是默认目录（`skills_dir()`）
+
+### Added · Hooks 子系统
+
+YAML 配置，**事件名直接复用 Claude Code**：PreToolUse / PostToolUse /
+UserPromptSubmit / Notification。hook = 一条外部命令；玄玑把 payload JSON 写到
+hook 的 stdin。
+
+- exit 0：放行
+- exit 2 或 stdout 打 `{"decision":"deny", "reason":"..."}`：拒绝（**仅 PreToolUse 生效**）
+- 其他错误：默认 allow（**hook 故障不能锁死会话**）
+- `HooksRegistry.for_event(event)` / `matching(event, tool_name=, prompt=)`
+- matcher 语义：tool 事件用 fnmatch glob；UserPromptSubmit 用 substring；
+  其他只接受 `*`
+- Conductor 集成：PreToolUse 跑在 `tool_run_started` 之后、Gate 之前；
+  PostToolUse 跑在 sandbox 之后、纯观察（错误吃掉只入 audit）
+
+### Quality
+
+- ruff / mypy strict 全绿（**91 源文件 0 告警**）
+- pytest **315 全过**（+6 subprocess + +10 mcp server + +14 skills + +12 hooks = +42）
+- 工具总数 **29 个**（26 旧 + 3 个 skill_files 三件套；mcp adapter / sub-agent
+  dispatch 等动态工具不计）
+
+### Design highlights
+
+**为什么 Subprocess Sandbox 是 opt-in**：大多数工具是纯函数式的（read_file /
+list_dir / knowledge_search），进子进程纯粹增加序列化开销。`is_subprocess_safe`
+显式标记，让需要隔离的（run_shell / 未来的 LLM-generated tool）单独进，
+其他保持 InProc 性能。
+
+**为什么 MCP stdio 用 NDJSON 而不是复用 LSP 分帧**：MCP 协议规定 stdio 是 NDJSON，
+混用 Content-Length 会让客户端解析挂掉。两个传输层物理隔离最稳。
+
+**为什么 `all()` 不叫 `list()`**：在 class body 里有 `def list(self) -> list[T]`，
+mypy 严格模式会把第二个 `list` 解析成方法引用而非内置类型，报 valid-type 错。
+重命名是最干净的修法。
+
+---
+
+## [0.6.0] — 2026-05-26
+
+**异构路由 + MCP 客户端**。让玄玑能调度多家 LLM（按任务路由）+ 能消费别家
+（CC/Codex/任意 MCP server）暴露的工具。
+
+### Added · ModelRouter 异构路由
+
+- `xuanji/llm/router.py::ModelRouter`：按 `RoutingPolicy` 决定每轮用哪家
+  - 支持维度：task_kind / complexity / ctx_size / persona_mode
+  - **默认 `prefer_model=None`**——不预设偏好，按 ProfileStore 顺序取首个可用
+  - fallback 链：主 provider 失败 → 切下一个 profile，audit 记 `model_route_changed`
+- Conductor 接 ModelRouter，每轮起势前 route 一次，结果注入 `_send` 调用
+
+### Added · MCP 客户端
+
+让玄玑做"工具消费者"：连别家 MCP server，把人家的工具像本地工具一样调。
+
+- `xuanji/mcp/protocol.py`：JSON-RPC 2.0 + initialize / tools/list / tools/call
+- `xuanji/mcp/transport.py`：stdio NDJSON（spawn 子进程模式）
+- `xuanji/mcp/client.py::McpClient`：握手、心跳、tools list 缓存
+- `xuanji/mcp/adapter.py::McpToolAdapter`：把远程 MCP tool 包成 `xuanji.Tool`
+  - 实例属性遮罩 ClassVar 的 `name / version / schema` 走 `# type: ignore[misc]`
+  - 远程工具的 `risk` 默认按服务器声明，没声明就保守取 `RiskTag.IO`
+- `xuanji/mcp/registry.py::McpClientHub`：管多个 MCP server 连接，按 server name 命名空间
+- ConfigStore 加 `mcp_clients: list[McpClientConfig]` —— 用户配置远程 server 入口
+- `xuanji mcp client list / add / remove / test` CLI
+
+### Quality
+
+- ruff / mypy strict 全绿
+- pytest 全过（+model_router + mcp_client + mcp_config + dispatch_heterogeneous）
+- ServerRuntime 启动时自动连所有配置的 MCP server，把远程工具注册到 registry
+
+### Design highlights
+
+**为什么默认 prefer_model=None**：硬编码偏好（比如默认 sonnet）会让没装该 provider
+的小宝直接挂掉。None 让 router 按用户实际配的 profile 顺序选，"装了什么用什么"。
+
+**为什么 MCP 客户端先于 server**：先消费再生产是对称设计——`xuanji/mcp/`
+两端共享 protocol / transport，先把客户端跑通，server 端只是把 dispatcher
+方向反一下，复用度极高。0.7 接 server 时基本零新代码。
+
+---
+
+## [0.5.0] — 2026-05-26
+
+**IPC 子系统 + VS Code 插件**。把 ServerRuntime 暴露成 LSP 风格 stdio JSON-RPC，
+做出第一个非聊天形态的玄玑前端：VS Code 状态栏 / 命令面板 / 三栏仪表盘。
+顺手把 `core/` 目录正名为 `xuanji/`（包名与目录名对齐）。
+
+### Changed · 包目录正名
+
+- `core/` → `xuanji/`：80+ 文件批量改名
+- `pyproject.toml`：`packages = ["core"]` → `packages = ["xuanji"]`
+- 入口脚本：`xuanji = "core.cli:app"` → `xuanji = "xuanji.cli:app"`
+- 所有 import 全量替换 `core.X` → `xuanji.X`
+
+**Why**：包名（在 PyPI 上叫什么） vs 目录名（开发时 import 什么）必须一致——
+当前包要叫 `xuanji-fivem`，目录还叫 `core` 太混乱。提前正名为以后上 registry
+扫清障碍。
+
+### Added · IPC 子系统
+
+LSP 风格 stdio JSON-RPC，**不是新调度**——把 ServerRuntime 已有的 store /
+scaffold / registry 暴露成 22 个 RPC method。CLI / FastAPI / IPC 三个入口
+共享同一个内核，零分叉。
+
+- `xuanji/ipc/framing.py`：LSP Content-Length 分帧
+- `xuanji/ipc/dispatcher.py`：JSON-RPC 2.0 + method 注册表
+- `xuanji/ipc/server.py`：stdio loop + ServerRuntime 桥接
+- `xuanji/ipc/errors.py`：JSON-RPC 错码常量
+- 22 个 RPC method 覆盖：项目识别 / 知识库 / 记忆 / 预设管理 / 工具列表 / chat 流
+- `xuanji ipc` CLI 命令（启动前 set_utf8_stdio）
+
+### Added · VS Code 插件
+
+`apps/vscode/`：独立 npm 包，**零模型依赖**——所有调用都走 stdio IPC。
+
+- TypeScript 5 + esbuild 打包
+- 状态栏：项目识别结果（QBox + ox_inventory）实时显示
+- 命令面板五件套：detect / presets / new / preset list / preset accept
+- 三栏仪表盘 webview：项目身份 + 工具栈 + 自学习预设草案
+- LLM 客户端（Claude Code 等）该用啥用啥；玄玑插件提供"工具栏"能力
+
+### Added · 文档与质量
+
+- `docs/packaging.md`：发布与分发指南
+- 新增 init / doctor 命令链路
+- 三件套全绿（ruff / mypy / pytest）
+
+### Design highlights
+
+**stdio JSON-RPC = LSP 风格 + 复用 ServerRuntime**：IPC 不是新调度，就是把
+ServerRuntime 已有的 store / scaffold / registry 暴露成 22 个 RPC method。
+CLI / FastAPI / IPC 三个入口共享同一个内核，零分叉。
+
+**插件零模型依赖**：apps/vscode 不直接调 LLM——所有调用都走 stdio。LLM
+客户端（Claude Code 等）该用啥用啥，玄玑插件提供项目识别 / 知识库 / 记忆 /
+预设管理这些"工具栏"能力。
+
+---
+
 ## [0.4.0] — 2026-05-26
 
 **FiveM 专精层** · 进任意 resource 目录玄玑就开箱即懂；从预设一键起脚手架；

@@ -1,0 +1,30 @@
+# 玄玑示范 hook：UserPromptSubmit
+#
+# 用户输入提交瞬间触发——matcher 是子串匹配（大小写不敏感）。
+# 主要用来：
+#   - 提示「这种操作请走 ops 模式」之类的引导
+#   - 拦截「敏感关键词」（PreToolUse 之前的预警）
+#
+# 注意：UserPromptSubmit 的 deny 不会真的阻止用户，只在 audit 里记录。
+# 真正的 gate 还是要靠 PreToolUse + Gate 中间件。
+
+hooks:
+  # 规则 1：包含「部署」或「上生产」时提醒小宝走 ops 流程
+  - matcher: 部署
+    description: 用户提到部署时 stderr 提示一下
+    timeout: 5
+    command: |
+      python -c "import sys; print('[hook] 检测到部署相关意图——记得切到 ops 模式做 review', file=sys.stderr)"
+
+  - matcher: 生产
+    description: 用户提到生产时提醒
+    timeout: 5
+    command: |
+      python -c "import sys; print('[hook] 涉及生产环境——动手前先在 staging 跑一遍', file=sys.stderr)"
+
+  # 规则 2：常见 fivem 关键词命中时给玄玑一个 hint（不阻断）
+  - matcher: QBox
+    description: 用户提 QBox 时 hint 一下偏好
+    timeout: 5
+    command: |
+      python -c "import sys; print('[hook] QBox 项目优先用 ox_inventory + ox_lib 而非 qb-inventory', file=sys.stderr)"
