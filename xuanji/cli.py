@@ -51,11 +51,14 @@ from xuanji.config import (
     Profile,
     ProfileKind,
     config_file_path,
+    factory_db_path,
     knowledge_db_path,
     memory_db_path,
     scaffold_drafts_dir,
     scaffold_presets_dir,
     tool_drafts_dir,
+    tool_published_dir,
+    tool_staged_dir,
 )
 from xuanji.config.profiles import DEFAULT_MODELS, OFFICIAL_BASE_URLS
 from xuanji.fivem.scaffold import ScaffoldEngine
@@ -1389,6 +1392,174 @@ def tool_list_cmd() -> None:
     table.add_column("description", overflow="fold")
     for t in registry.all():
         table.add_row(t.name, t.risk.value, (t.description or "").strip()[:80])
+    console.print(table)
+
+
+def _open_factory() -> Any:
+    """打开 ToolFactory，复用激活 profile 与默认 model。"""
+    from xuanji.tools.tool_factory import FactoryRegistry, ToolFactory
+
+    cfg_store = ConfigStore()
+    profile = cfg_store.load().get_active()
+    return ToolFactory(
+        drafts_dir=tool_drafts_dir(),
+        staged_dir=tool_staged_dir(),
+        published_dir=tool_published_dir(),
+        registry=FactoryRegistry(factory_db_path()),
+        profile=profile,
+        model=profile.default_model if profile else None,
+    )
+
+
+def _render_factory_status(status: Any) -> None:
+    table = Table(show_header=False, box=None, padding=(0, 2))
+    table.add_column(style="cyan")
+    table.add_column()
+    table.add_row("slug", status.slug)
+    table.add_row("status", status.status)
+    if status.draft_path:
+        table.add_row("draft", str(status.draft_path))
+    if status.code_path:
+        table.add_row("code", str(status.code_path))
+    if status.test_path:
+        table.add_row("test", str(status.test_path))
+    if status.last_test_passed is not None:
+        table.add_row(
+            "last_test",
+            "[green]passed[/green]" if status.last_test_passed else "[red]failed[/red]",
+        )
+    console.print(table)
+
+
+@tool_app.command("generate")
+def tool_generate(
+    slug: str = typer.Argument(..., help="草案 slug（不带 .json 后缀）"),
+) -> None:
+    """跑 LLM 把 draft 变成 staged 代码 + 单测。需要激活 profile。"""
+    factory = _open_factory()
+    if factory.profile is None:
+        console.print("[red]没有激活的 profile，先 xuanji config use <name>[/red]")
+        raise typer.Exit(1)
+
+    async def _run() -> Any:
+        return await factory.generate(slug)
+
+    try:
+        status = asyncio.run(_run())
+    except FileNotFoundError as e:
+        console.print(f"[red]{e}[/red]")
+        raise typer.Exit(1) from e
+    except ValueError as e:
+        console.print(f"[red]生成失败：{e}[/red]")
+        raise typer.Exit(1) from e
+    console.print(f"[green]✓[/green] codegen 成功（status={status.status}）")
+    _render_factory_status(status)
+    console.print(
+        "[dim]下一步：[bold]xuanji tool test " + slug + "[/bold] 跑单测[/dim]"
+    )
+
+
+@tool_app.command("test")
+def tool_test(
+    slug: str = typer.Argument(..., help="生成过代码的 slug"),
+    timeout: float = typer.Option(60.0, "--timeout", help="pytest 超时秒数"),
+) -> None:
+    """subprocess 跑生成的单测；通过则 status → tested。"""
+    factory = _open_factory()
+    try:
+        status = factory.test(slug, timeout_sec=timeout)
+    except FileNotFoundError as e:
+        console.print(f"[red]{e}[/red]")
+        raise typer.Exit(1) from e
+    if status.last_test_passed:
+        console.print(f"[green]✓ 单测通过[/green]（status={status.status}）")
+    else:
+        console.print(f"[red]× 单测未通过[/red]（status={status.status}）")
+    _render_factory_status(status)
+    if status.last_test_output:
+        console.print(
+            Panel(
+                status.last_test_output,
+                title="pytest 输出",
+                border_style="dim",
+            ),
+        )
+
+
+@tool_app.command("publish")
+def tool_publish(
+    slug: str = typer.Argument(..., help="测试通过的 slug"),
+) -> None:
+    """把 staged 代码复制到 published；下次启动 ServerRuntime 自动加载。"""
+    factory = _open_factory()
+    try:
+        status = factory.publish(slug)
+    except (FileNotFoundError, ValueError) as e:
+        console.print(f"[red]{e}[/red]")
+        raise typer.Exit(1) from e
+    console.print(f"[green]✓ 已发布[/green] → {status.code_path}")
+    _render_factory_status(status)
+    console.print("[dim]下次 chat / serve / ipc 启动时会自动加载。[/dim]")
+
+
+@tool_app.command("reject")
+def tool_reject(
+    slug: str = typer.Argument(..., help="要拒绝的 slug"),
+    reason: str = typer.Option("", "--reason", "-r", help="拒绝理由（写进状态）"),
+) -> None:
+    """标记草案/生成版被拒。代码不删，但 status → rejected，不再被 publish。"""
+    factory = _open_factory()
+    status = factory.reject(slug, reason=reason)
+    console.print(f"[yellow]已拒绝：{slug}[/yellow]（status={status.status}）")
+    if reason:
+        console.print(f"[dim]reason: {reason}[/dim]")
+
+
+@tool_app.command("status")
+def tool_status(
+    slug: str | None = typer.Argument(None, help="不传则列出所有；传则看单个详情"),
+) -> None:
+    """看工厂注册表的状态：每个 slug 走到哪一步了。"""
+    from xuanji.tools.tool_factory import FactoryRegistry
+
+    reg = FactoryRegistry(factory_db_path())
+    if slug:
+        st = reg.get(slug)
+        if st is None:
+            console.print(f"[yellow]找不到 slug={slug}[/yellow]")
+            raise typer.Exit(1)
+        _render_factory_status(st)
+        if st.last_test_output:
+            console.print(
+                Panel(
+                    st.last_test_output,
+                    title="最近一次测试输出",
+                    border_style="dim",
+                ),
+            )
+        return
+
+    rows = reg.all()
+    if not rows:
+        console.print("[dim]工厂注册表是空的——还没人 generate 过。[/dim]")
+        return
+    table = Table(title=f"ToolFactory 状态（{len(rows)} 条）")
+    table.add_column("slug", style="cyan")
+    table.add_column("status", style="magenta")
+    table.add_column("test", overflow="fold")
+    table.add_column("code", overflow="fold")
+    for st in rows:
+        test_cell = "-"
+        if st.last_test_passed is True:
+            test_cell = "[green]passed[/green]"
+        elif st.last_test_passed is False:
+            test_cell = "[red]failed[/red]"
+        table.add_row(
+            st.slug,
+            st.status,
+            test_cell,
+            str(st.code_path) if st.code_path else "-",
+        )
     console.print(table)
 
 

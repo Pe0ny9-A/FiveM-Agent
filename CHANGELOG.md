@@ -2,9 +2,74 @@
 
 所有重要的变更都记在这里。版本号遵守 [SemVer](https://semver.org/lang/zh-CN/)。
 
-# 玄玑 · CHANGELOG
+## [0.9.0] — 2026-05-26
 
-所有重要的变更都记在这里。版本号遵守 [SemVer](https://semver.org/lang/zh-CN/)。
+**ToolFactory 闭环 — generate / test / publish / reject CLI 全打通 + published 启动期自动加载**。
+
+0.2 起就有 `propose_tool` 写草案，但从草案到"真能用的工具"中间断了一截：玄玑写的草案
+小宝得人工写代码、人工注册。0.9 把这段缺口补上——同时**死守安全核心**：玄玑只能
+propose（写 JSON），后面 generate/test/publish 全是 CLI 命令，LLM 无法触发。
+
+### Added · CLI 工厂四件套
+
+- `xuanji tool generate <slug>` — 跑激活 profile 的 LLM 把 draft 转 staged 代码 + 单测
+- `xuanji tool test <slug> [--timeout 60]` — subprocess 跑生成的 pytest，通过则 status → tested
+- `xuanji tool publish <slug>` — `status==tested` 才放行，复制到 `tool_published_dir/<slug>.py`
+- `xuanji tool reject <slug> --reason "..."` — 标记拒绝，代码不删但不再被 publish
+- `xuanji tool status [<slug>]` — 看工厂注册表（每个 slug 走到哪一步、最后一次 pytest 输出）
+
+### Added · published 动态加载
+
+新模块 `xuanji/tools/published_loader.py`：
+
+- `load_published_tools(published_dir)` 扫目录下所有 `*.py`
+- 动态 import 到独立命名空间 `xuanji.tools.published.<slug>`，不污染项目 import
+- 用 `inspect.getmembers` 找"在本模块直接定义"的 `Tool` 子类（避开 `from xuanji.* import Tool` 拉进来的基类）
+- 必须 `cls()` 无参数实例化才接受
+- **单文件失败不连坐**：一个坏工具只在 logger.warning 提示，不影响其它工具与启动
+
+`ServerRuntime.build_registry()` 在工厂工具之后调用 `load_published_tools(tool_published_dir())`，
+名字冲突走 `contextlib.suppress(ValueError)`——内置工具优先，published 同名静默跳过。
+
+### Safety · 闭环死守玄玑不能 publish
+
+玄玑通过 `propose_tool` 工具调用产出 `tool_drafts/<slug>.json`——这是 LLM 唯一能做的事。
+`generate / test / publish / reject` 只能由小宝在 CLI 触发：
+
+```
+玄玑 LLM ──propose_tool──▶ tool_drafts/<slug>.json
+                              │
+                              │  小宝 review（看 rationale + schema）
+                              ▼
+                       xuanji tool generate <slug>     ← CLI，不在工具集
+                              │  跑 LLM codegen
+                              ▼
+                       tool_staged/<slug>.py + test_<slug>.py
+                              │
+                       xuanji tool test <slug>          ← CLI，subprocess pytest
+                              │  通过 → status="tested"
+                              ▼
+                       xuanji tool publish <slug>       ← CLI，门控 status=="tested"
+                              │
+                              ▼
+                       tool_published/<slug>.py
+                              │
+                              ▼
+                       下次 ServerRuntime 启动自动加载
+```
+
+### Quality
+
+| | |
+|---|---|
+| 单测 | **354 全过**（337 → 354，+17 工厂闭环：状态机 + loader + 端到端） |
+| ruff | 0 告警 |
+| mypy | strict **93 源文件** 0 告警（+1：published_loader） |
+| 工具数 | 仍 29 个静态 + 用户级 published 动态加载（不计入静态注册） |
+
+### Fixed
+
+- CHANGELOG.md 顶部之前有重复的 header 段，本次清掉
 
 ## [0.8.0] — 2026-05-26
 

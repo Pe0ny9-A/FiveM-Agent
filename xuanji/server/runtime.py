@@ -6,6 +6,7 @@
 
 from __future__ import annotations
 
+import contextlib
 import os
 from pathlib import Path
 
@@ -19,6 +20,7 @@ from xuanji.config import (
     scaffold_presets_dir,
     skills_dir,
     tool_drafts_dir,
+    tool_published_dir,
     vector_db_path,
 )
 from xuanji.config.profiles import Profile
@@ -41,6 +43,7 @@ from xuanji.tools import (
     builtin_tools,
     ingest_tools_offline,
     knowledge_tools,
+    load_published_tools,
     memory_tools,
     meta_tools,
     skill_file_tools,
@@ -113,6 +116,9 @@ class ServerRuntime:
         registry.register_all(skill_tools(self.memory))
         registry.register_all(skill_file_tools(skills_dir()))
         registry.register_all(tool_factory_tools(tool_drafts_dir()))
+        for published in load_published_tools(tool_published_dir()):
+            with contextlib.suppress(ValueError):
+                registry.register(published)
         # FiveM 三件套：detect_project / analyze_resource / propose_preset
         registry.register_all(fivem_tools(self.scaffold_engine))
         # MCP：若 attach_mcp 已跑过，把收编的远程工具一并塞进来

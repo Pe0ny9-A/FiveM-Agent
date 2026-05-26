@@ -39,6 +39,7 @@ from xuanji.tools.meta import (
     ReadSkillTool,
     meta_tools,
 )
+from xuanji.tools.published_loader import load_published_tools
 from xuanji.tools.skill_files import (
     ListSkillFilesTool,
     MatchSkillFileTool,
@@ -82,6 +83,7 @@ __all__ = [
     "builtin_tools",
     "ingest_tools_offline",
     "knowledge_tools",
+    "load_published_tools",
     "memory_tools",
     "meta_tools",
     "skill_file_tools",
