@@ -36,7 +36,6 @@ from rich.panel import Panel
 from rich.table import Table
 from rich.text import Text
 
-from core.capability.registry import ToolRegistry
 from core.capability.tool import Tool
 from core.config import (
     AnthropicProfile,
@@ -49,26 +48,17 @@ from core.config import (
     config_file_path,
     knowledge_db_path,
     memory_db_path,
+    scaffold_drafts_dir,
+    scaffold_presets_dir,
     tool_drafts_dir,
 )
 from core.config.profiles import DEFAULT_MODELS, OFFICIAL_BASE_URLS
+from core.fivem.scaffold import ScaffoldEngine
 from core.gate.bridge import HITLBridge
 from core.knowledge import SqliteKnowledgeStore
 from core.knowledge.sources import seed_chunks, seed_sources, seed_symbols
 from core.llm.providers.factory import build_provider
 from core.memory import Memory, MemoryKind, MemoryScope, SqliteMemoryStore
-from core.neural import Conductor
-from core.persona import PersonaMode
-from core.tools import (
-    builtin_tools,
-    ingest_tools_offline,
-    knowledge_tools,
-    memory_tools,
-    meta_tools,
-    skill_tools,
-    tool_factory_tools,
-)
-from core.tools.ingest_url import IngestUrlTool
 
 app = typer.Typer(
     add_completion=False,
@@ -98,6 +88,17 @@ app.add_typer(knowledge_app, name="knowledge")
 app.add_typer(memory_app, name="memory")
 app.add_typer(skill_app, name="skill")
 app.add_typer(tool_app, name="tool")
+
+fivem_app = typer.Typer(
+    help="FiveM 项目识别与脚手架（detect / new / analyze）",
+    no_args_is_help=True,
+)
+preset_app = typer.Typer(
+    help="Scaffold 预设管理：列出 / 查看 / 接受/拒绝 玄玑提交的预设草案",
+    no_args_is_help=True,
+)
+app.add_typer(fivem_app, name="fivem")
+app.add_typer(preset_app, name="preset")
 
 console = Console()
 
@@ -931,19 +932,10 @@ def tool_drafts(
 @tool_app.command("list")
 def tool_list_cmd() -> None:
     """列出当前会话注入的所有工具（演示性，与 chat 启动时的 registry 一致）。"""
-    # 复刻 chat loop 里同一套注入顺序，仅展示
-    knowledge = SqliteKnowledgeStore(knowledge_db_path())
-    memory = SqliteMemoryStore(memory_db_path())
-    project_namespace = _default_namespace()
-    registry = ToolRegistry()
-    registry.register_all(builtin_tools())
-    registry.register_all(knowledge_tools(knowledge))
-    registry.register_all(ingest_tools_offline(knowledge))
-    registry.register(IngestUrlTool(knowledge))
-    registry.register_all(memory_tools(memory, project_namespace))
-    registry.register_all(skill_tools(memory))
-    registry.register_all(tool_factory_tools(tool_drafts_dir()))
-    registry.register_all(meta_tools(registry, memory))
+    from core.server.runtime import ServerRuntime
+
+    runtime = ServerRuntime()
+    registry = runtime.build_registry()
 
     table = Table(title=f"已注册工具（{len(registry)} 个）")
     table.add_column("name", style="cyan")
@@ -952,6 +944,302 @@ def tool_list_cmd() -> None:
     for t in registry.all():
         table.add_row(t.name, t.risk.value, (t.description or "").strip()[:80])
     console.print(table)
+
+
+# ---------- fivem ----------
+
+
+def _open_scaffold_engine() -> ScaffoldEngine:
+    return ScaffoldEngine(
+        user_presets_dir=scaffold_presets_dir(),
+        drafts_dir=scaffold_drafts_dir(),
+    )
+
+
+@fivem_app.command("detect")
+def fivem_detect(
+    path: str = typer.Argument(".", help="目标目录，默认当前 cwd"),
+) -> None:
+    """识别一个目录是不是 FiveM resource，推断 framework / inventory / target。"""
+    from core.fivem import detect_fivem_context, summarize_for_prompt
+
+    p = Path(path).resolve()
+    if not p.exists():
+        console.print(f"[red]路径不存在：{p}[/red]")
+        raise typer.Exit(1)
+    ctx = detect_fivem_context(p)
+
+    table = Table(show_header=False, box=None, padding=(0, 2))
+    table.add_column(style="cyan")
+    table.add_column()
+    table.add_row("path", str(ctx.project_root))
+    table.add_row(
+        "is_fivem_resource",
+        "[green]是[/green]" if ctx.is_fivem_resource else "[dim]否[/dim]",
+    )
+    table.add_row("framework", f"{ctx.framework.value} ({ctx.framework_confidence:.0%})")
+    table.add_row("inventory", ctx.inventory.value)
+    table.add_row("target", ctx.target.value)
+    if ctx.manifest:
+        m = ctx.manifest
+        table.add_row("name", m.name or "-")
+        table.add_row("version", m.version or "-")
+        deps = ", ".join(m.dependencies[:10]) or "-"
+        if len(m.dependencies) > 10:
+            deps += f" …（共 {len(m.dependencies)}）"
+        table.add_row("dependencies", deps)
+    if ctx.detected_resources:
+        names = ", ".join(p.name for p in ctx.detected_resources[:10])
+        table.add_row("sub_resources", names)
+    console.print(table)
+    if ctx.notes:
+        console.print()
+        for n in ctx.notes:
+            console.print(f"[dim]· {n}[/dim]")
+    summary = summarize_for_prompt(ctx)
+    if summary:
+        console.print(Panel(summary, title="塞给玄玑的 system prompt 摘要", border_style="cyan"))
+
+
+@fivem_app.command("presets")
+def fivem_list_presets() -> None:
+    """列出所有 scaffold 预设（builtin + 用户激活的）。"""
+    engine = _open_scaffold_engine()
+    items = engine.list_presets()
+    table = Table(title=f"Scaffold 预设（{len(items)} 套）")
+    table.add_column("key", style="cyan", no_wrap=True)
+    table.add_column("source", style="magenta")
+    table.add_column("framework")
+    table.add_column("label", overflow="fold")
+    for it in items:
+        table.add_row(it["key"], it["source"], it["framework"], it["label"])
+    console.print(table)
+    console.print(
+        "[dim]玄玑提交的草案见 [bold]xuanji preset list[/bold]，"
+        "通过后用 [bold]xuanji preset accept <key>[/bold] 激活。[/dim]"
+    )
+
+
+@fivem_app.command("new")
+def fivem_new(
+    name: str = typer.Argument(..., help="新 resource 的名字（也是目录名）"),
+    preset: str = typer.Option(
+        "qbox-basic", "--preset", "-p", help="使用的预设 key"
+    ),
+    target: str = typer.Option(
+        ".", "--target", "-t", help="生成到哪个目录下，默认 cwd"
+    ),
+    author: str = typer.Option("", "--author"),
+    description: str = typer.Option("", "--description"),
+    version: str = typer.Option("1.0.0", "--version"),
+    overwrite: bool = typer.Option(False, "--overwrite", help="覆盖已存在的同名文件"),
+) -> None:
+    """从预设生成一个新 FiveM resource 骨架。"""
+    engine = _open_scaffold_engine()
+    target_dir = Path(target).resolve() / name
+    try:
+        result = engine.generate(
+            preset,
+            target_dir,
+            resource_name=name,
+            author=author,
+            description=description,
+            version=version,
+            overwrite=overwrite,
+        )
+    except KeyError as e:
+        console.print(f"[red]{e}[/red]")
+        raise typer.Exit(1) from e
+
+    console.print(
+        f"[green]已生成 {len(result.files_written)} 个文件到 {result.target_dir}[/green]"
+    )
+    for fp in result.files_written:
+        console.print(f"  + {fp.relative_to(result.target_dir)}")
+    if result.files_skipped:
+        console.print(
+            f"[yellow]{len(result.files_skipped)} 个文件已存在，跳过（用 --overwrite 强写）[/yellow]"
+        )
+
+
+@fivem_app.command("analyze")
+def fivem_analyze(
+    path: str = typer.Argument(".", help="resource 路径，默认当前 cwd"),
+) -> None:
+    """分析一个 resource，列出 exports / events / API 调用频率。"""
+    from core.fivem.analyzer import analyze_resource
+
+    p = Path(path).resolve()
+    if not p.exists():
+        console.print(f"[red]路径不存在：{p}[/red]")
+        raise typer.Exit(1)
+    analysis = analyze_resource(p)
+
+    if not analysis.context.is_fivem_resource:
+        console.print("[yellow]不是 FiveM resource。说明：[/yellow]")
+        for n in analysis.notes:
+            console.print(f"  · {n}")
+        raise typer.Exit(1)
+
+    table = Table(show_header=False, box=None, padding=(0, 2))
+    table.add_column(style="cyan")
+    table.add_column()
+    table.add_row("path", str(analysis.resource_path))
+    table.add_row("framework", analysis.context.framework.value)
+    table.add_row("files_scanned", str(analysis.files_scanned))
+    table.add_row("exports", ", ".join(analysis.exports[:20]) or "-")
+    table.add_row(
+        "events_registered",
+        ", ".join(analysis.events_registered[:15]) or "-",
+    )
+    table.add_row(
+        "events_triggered",
+        ", ".join(analysis.events_triggered[:15]) or "-",
+    )
+    table.add_row("callbacks", ", ".join(analysis.callbacks[:10]) or "-")
+    console.print(table)
+
+    if analysis.framework_api_calls:
+        api_table = Table(title="高频 API 调用（top 15）")
+        api_table.add_column("call", style="cyan", overflow="fold")
+        api_table.add_column("count", justify="right")
+        for k, v in list(analysis.framework_api_calls.items())[:15]:
+            api_table.add_row(k, str(v))
+        console.print(api_table)
+
+
+# ---------- preset ----------
+
+
+@preset_app.command("list")
+def preset_list() -> None:
+    """列出所有"待 review"的预设草案（玄玑通过 propose_preset 提交的）。"""
+    engine = _open_scaffold_engine()
+    drafts = engine.list_drafts()
+    if not drafts:
+        from core.config import scaffold_drafts_dir
+
+        console.print(
+            f"[yellow]暂无草案。玄玑通过 [bold]propose_preset[/bold] 提交后会出现在这里："
+            f"\n{scaffold_drafts_dir()}[/yellow]"
+        )
+        return
+    table = Table(title=f"预设草案（{len(drafts)} 个待 review）")
+    table.add_column("key", style="cyan", no_wrap=True)
+    table.add_column("framework", style="magenta")
+    table.add_column("inventory")
+    table.add_column("files")
+    table.add_column("label", overflow="fold")
+    for d in drafts:
+        table.add_row(
+            d.key,
+            d.framework.value,
+            d.inventory.value,
+            str(len(d.files)),
+            d.label,
+        )
+    console.print(table)
+
+
+@preset_app.command("show")
+def preset_show(
+    key: str = typer.Argument(..., help="预设草案 key"),
+    body: bool = typer.Option(False, "--body", help="同时打印每个文件正文"),
+) -> None:
+    """查看一个草案详情。"""
+    engine = _open_scaffold_engine()
+    draft = engine.get_draft(key)
+    if draft is None:
+        # 也许是已激活的
+        try:
+            preset = engine.get(key)
+        except KeyError as e:
+            console.print(f"[red]{e}[/red]")
+            raise typer.Exit(1) from e
+        console.print(
+            f"[dim]({key} 已激活，不是草案)[/dim]"
+        )
+        draft = preset
+    table = Table(show_header=False, box=None)
+    table.add_column(style="cyan")
+    table.add_column()
+    table.add_row("key", draft.key)
+    table.add_row("source", draft.source)
+    table.add_row("label", draft.label)
+    table.add_row("description", draft.description)
+    table.add_row("framework", draft.framework.value)
+    table.add_row("inventory", draft.inventory.value)
+    table.add_row("target", draft.target.value)
+    table.add_row("files", str(len(draft.files)))
+    if draft.metadata:
+        for k, v in draft.metadata.items():
+            table.add_row(f"metadata.{k}", str(v))
+    console.print(Panel(table, title=f"preset · {key}", border_style="magenta"))
+
+    for f in draft.files:
+        if body:
+            console.print(Panel(f.content, title=f.path, border_style="dim"))
+        else:
+            console.print(f"  · {f.path}  [dim]({len(f.content)} chars)[/dim]")
+
+
+@preset_app.command("accept")
+def preset_accept(
+    key: str = typer.Argument(...),
+    force: bool = typer.Option(False, "--force", "-f"),
+) -> None:
+    """激活一个草案——之后 xuanji fivem new --preset <key> 就能用。"""
+    engine = _open_scaffold_engine()
+    draft = engine.get_draft(key)
+    if draft is None:
+        console.print(f"[red]找不到草案：{key}[/red]")
+        raise typer.Exit(1)
+    if not force:
+        console.print(
+            Panel(
+                f"准备激活：{draft.label}\n"
+                f"framework={draft.framework.value} inventory={draft.inventory.value}\n"
+                f"包含 {len(draft.files)} 个文件",
+                title=f"review · {key}",
+                border_style="yellow",
+            ),
+        )
+        if not typer.confirm("确认激活？"):
+            raise typer.Exit()
+    target = engine.accept_draft(key)
+    console.print(f"[green]已激活到 {target}[/green]")
+
+
+@preset_app.command("reject")
+def preset_reject(
+    key: str = typer.Argument(...),
+    force: bool = typer.Option(False, "--force", "-f"),
+) -> None:
+    """拒绝并删除一个草案。"""
+    if not force and not typer.confirm(f"确定拒绝草案 {key}？"):
+        raise typer.Exit()
+    engine = _open_scaffold_engine()
+    if engine.reject_draft(key):
+        console.print(f"[green]已删除草案 {key}[/green]")
+    else:
+        console.print(f"[red]草案不存在：{key}[/red]")
+        raise typer.Exit(1)
+
+
+@preset_app.command("remove")
+def preset_remove(
+    key: str = typer.Argument(...),
+    force: bool = typer.Option(False, "--force", "-f"),
+) -> None:
+    """删除一个已激活的用户预设（builtin 不可删）。"""
+    if not force and not typer.confirm(f"确定删除已激活预设 {key}？"):
+        raise typer.Exit()
+    engine = _open_scaffold_engine()
+    if engine.remove_user_preset(key):
+        console.print(f"[green]已删除预设 {key}[/green]")
+    else:
+        console.print(f"[red]找不到用户预设 {key}（builtin 不可删）[/red]")
+        raise typer.Exit(1)
 
 
 # ---------- chat ----------
@@ -1019,6 +1307,8 @@ def _render_tool_event(delta) -> None:  # type: ignore[no-untyped-def]
 
 
 async def _chat_loop() -> None:
+    from core.server.runtime import ServerRuntime
+
     cfg = ConfigStore().load()
     profile = cfg.get_active()
     if not profile:
@@ -1027,34 +1317,14 @@ async def _chat_loop() -> None:
         )
         raise typer.Exit(1)
 
-    registry = ToolRegistry()
-    registry.register_all(builtin_tools())
-    # 知识库工具：稷下学宫接通
-    knowledge = SqliteKnowledgeStore(knowledge_db_path())
-    registry.register_all(knowledge_tools(knowledge))
-    # 怀玉阁：记忆库挂上 Conductor，开启 reflux
-    memory = SqliteMemoryStore(memory_db_path())
-
-    # 自演化工具集：知识 ingestion / 记忆主动读写 / 技能管理 / 工具提案
-    project_namespace = Path.cwd().resolve().name or "default"
-    registry.register_all(ingest_tools_offline(knowledge))
-    registry.register(IngestUrlTool(knowledge))  # NET 风险 → 司辰阁 HITL
-    registry.register_all(memory_tools(memory, project_namespace))
-    registry.register_all(skill_tools(memory))
-    registry.register_all(tool_factory_tools(tool_drafts_dir()))
-    # 元工具最后注册——它们依赖 registry 已经满
-    registry.register_all(meta_tools(registry, memory))
+    runtime = ServerRuntime(cfg_store=ConfigStore())
+    registry = runtime.build_registry()
 
     profile_name = cfg.active_profile or "?"
-    conductor = Conductor(
+    conductor = runtime.make_conductor(
         profile=profile,
-        mode=PersonaMode.CHAT,
-        temperature=cfg.persona_temperature,
-        assistant_alias=cfg.assistant_alias,
-        user_alias=cfg.user_alias,
-        registry=registry,
         hitl_bridge=ConsoleHITL(),
-        memory=memory,
+        registry=registry,
     )
     _greet(
         profile_name,

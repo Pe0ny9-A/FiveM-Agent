@@ -1,6 +1,6 @@
 [project]
 name = "xuanji"
-version = "0.3.0"
+version = "0.4.0"
 description = "玄玑 · FiveM 智能体内核（Capability/Body/Memory/Knowledge/Neural/Gate/Ensemble）"
 readme = "README.md"
 requires-python = ">=3.12"

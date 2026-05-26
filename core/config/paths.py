@@ -81,3 +81,17 @@ def tool_published_dir() -> Path:
 def factory_db_path() -> Path:
     """ToolFactory 状态数据库。"""
     return data_dir() / "tool_factory.db"
+
+
+def scaffold_presets_dir() -> Path:
+    """用户已激活的 scaffold 预设目录。"""
+    p = data_dir() / "scaffold_presets"
+    p.mkdir(parents=True, exist_ok=True)
+    return p
+
+
+def scaffold_drafts_dir() -> Path:
+    """propose_preset 提交的预设草案目录（待 review）。"""
+    p = data_dir() / "scaffold_drafts"
+    p.mkdir(parents=True, exist_ok=True)
+    return p

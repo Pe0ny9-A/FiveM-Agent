@@ -2,6 +2,85 @@
 
 所有重要的变更都记在这里。版本号遵守 [SemVer](https://semver.org/lang/zh-CN/)。
 
+## [0.4.0] — 2026-05-26
+
+**FiveM 专精层** · 进任意 resource 目录玄玑就开箱即懂；从预设一键起脚手架；
+能从现有 resource 反向学习并自我添加预设。
+
+### Added · FiveM 专精层
+
+- `core/fivem/`：新子系统，不属于七大核心子系统，是"领域知识层"
+  - `models.py`：Framework / InventoryKind / TargetKind / FxManifest / FiveMContext
+  - `manifest.py`：fxmanifest.lua 正则解析器（声明式字段全覆盖）
+  - `detector.py`：综合判断器
+    - 当前是 resource → 解析自身 fxmanifest dependencies 推断 framework
+    - 当前是 server bundle 根 → 扫 resources/ + server.cfg 的 ensure 列表
+    - 都不是 → 优雅退化，仍尝试找子 resources
+  - `scaffold.py`：6 套核心预设 + 用户预设两层加载
+  - `presets.py`：内置 6 套预设
+    - `qbcore-basic` / `qbox-basic` / `qbcore-job` / `qbox-job`
+    - `ox-target-npc`（standalone NPC 对话）
+    - `esx-basic`
+  - `analyzer.py`：从 resource 抽 exports / events / API 调用频率
+
+### Added · 自学习能力
+
+玄玑现在能反过来"教自己"——读现有 resource → 抽规律 → 提交预设草案：
+
+| 工具 | 类型 | 作用 |
+|---|---|---|
+| `detect_project` | SAFE | 给当前目录的项目身份卡 |
+| `analyze_resource` | SAFE | 静态分析一个 resource 的 exports/events/API |
+| `propose_preset` | IO | 提交"做这类 resource 的标准骨架"草案 |
+
+**安全边界**（同 propose_tool 路线）：
+- `propose_preset` 只产 JSON 草案到 `<data_dir>/scaffold_drafts/`
+- **不会自动激活**——小宝 review 后跑 `xuanji preset accept <key>`
+- 路径校验拒绝绝对路径 / `..` / Windows 盘符前缀
+- 必须含 `fxmanifest.lua`（不能产出无法启动的预设）
+
+### Added · Conductor 集成
+
+- `Conductor.static_extra` 新参数：启动期固定注入到 system prompt 的额外片段
+- `ServerRuntime` 启动时自动跑 detector，把 FiveM 项目身份卡作为 static_extra 注入
+- 玄玑回答前已经知道："当前是 QBox 1.x + ox_inventory 项目"，不用每次问
+
+### Added · CLI 子命令
+
+- `xuanji fivem detect [path]` —— 看一个目录的项目身份卡
+- `xuanji fivem presets` —— 列所有可用预设
+- `xuanji fivem new <name> --preset <key>` —— 一键生成 resource 骨架
+- `xuanji fivem analyze [path]` —— 静态分析现有 resource
+- `xuanji preset list` —— 看玄玑提交的草案
+- `xuanji preset show <key> [--body]` —— 查看草案完整内容
+- `xuanji preset accept <key>` —— 激活一个草案
+- `xuanji preset reject <key>` —— 拒绝并删除草案
+- `xuanji preset remove <key>` —— 删除已激活的用户预设
+
+### Internal
+
+- `ServerRuntime` 接管 CLI chat loop 与 tool list，单源注入避免双轨维护
+- 新增 `core/config/paths.py::scaffold_presets_dir / scaffold_drafts_dir`
+
+### Quality
+
+- ruff / mypy strict 全绿（73 源文件 0 告警）
+- pytest **204 测试全过**（M3 173 → 204，+31 个 fivem 测）
+- 工具总数 **26 个**（+ detect_project / analyze_resource / propose_preset）
+
+### Design highlights
+
+**为什么"识别"而不是"问"**：用户在 resource 目录里 `xuanji chat` 时，玄玑应该
+立即知道这是什么框架。每次问一遍既冗余又容易答错。detector 在 ServerRuntime 启动时
+跑一次，把 framework / inventory / target 写进 system prompt 段，玄玑后续
+回答自动选对的 API。
+
+**为什么自学习预设而不是自学习工具**：预设是模板（声明式），工具是代码（命令式）。
+模板风险低（不可执行），代码风险高（任意副作用）。这次扩"自学习"扩到预设是合理的；
+工具仍走 propose_tool → 人工 generate/test/publish 重路径。
+
+---
+
 ## [0.3.0] — 2026-05-25
 
 **M3 全家桶**：jieba / 向量检索 / 爬虫 / 群英会 / ToolFactory 自动链路 /

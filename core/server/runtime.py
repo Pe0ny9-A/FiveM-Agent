@@ -13,9 +13,13 @@ from core.config import (
     ConfigStore,
     knowledge_db_path,
     memory_db_path,
+    scaffold_drafts_dir,
+    scaffold_presets_dir,
     tool_drafts_dir,
 )
 from core.config.profiles import Profile
+from core.fivem import detect_fivem_context, summarize_for_prompt
+from core.fivem.scaffold import ScaffoldEngine
 from core.gate.bridge import HITLBridge, NoOpHITLBridge
 from core.knowledge import HashingEmbedder, InMemoryVectorStore, SqliteKnowledgeStore
 from core.memory import SqliteMemoryStore
@@ -30,6 +34,7 @@ from core.tools import (
     skill_tools,
     tool_factory_tools,
 )
+from core.tools.fivem import fivem_tools
 from core.tools.ingest_url import IngestUrlTool
 
 
@@ -46,6 +51,7 @@ class ServerRuntime:
         cfg_store: ConfigStore | None = None,
         project_namespace: str | None = None,
         attach_vector_index: bool = True,
+        project_root: Path | None = None,
     ) -> None:
         self.cfg_store = cfg_store or ConfigStore()
         self.knowledge = SqliteKnowledgeStore(knowledge_db_path())
@@ -54,7 +60,13 @@ class ServerRuntime:
             embedder = HashingEmbedder()
             vstore = InMemoryVectorStore(dim=embedder.dim)
             self.knowledge.attach_vector_index(embedder, vstore)
-        self.project_namespace = project_namespace or Path.cwd().name or "default"
+        self.project_root = (project_root or Path.cwd()).resolve()
+        self.project_namespace = project_namespace or self.project_root.name or "default"
+        # FiveM 专精层：scaffold engine 用项目级用户预设目录
+        self.scaffold_engine = ScaffoldEngine(
+            user_presets_dir=scaffold_presets_dir(),
+            drafts_dir=scaffold_drafts_dir(),
+        )
 
     def build_registry(self) -> ToolRegistry:
         """构造跟 CLI chat loop 一致的工具注册表。"""
@@ -66,11 +78,21 @@ class ServerRuntime:
         registry.register_all(memory_tools(self.memory, self.project_namespace))
         registry.register_all(skill_tools(self.memory))
         registry.register_all(tool_factory_tools(tool_drafts_dir()))
+        # FiveM 三件套：detect_project / analyze_resource / propose_preset
+        registry.register_all(fivem_tools(self.scaffold_engine))
         registry.register_all(meta_tools(registry, self.memory))
         return registry
 
     def get_active_profile(self) -> Profile | None:
         return self.cfg_store.load().get_active()
+
+    def fivem_static_extra(self) -> str | None:
+        """启动期跑一次 detector，把 FiveM 项目身份卡作为 system prompt 注入。"""
+        try:
+            ctx = detect_fivem_context(self.project_root)
+        except OSError:
+            return None
+        return summarize_for_prompt(ctx)
 
     def make_conductor(
         self,
@@ -91,6 +113,8 @@ class ServerRuntime:
             hitl_bridge=hitl_bridge or NoOpHITLBridge(),
             memory=self.memory,
             memory_namespace=self.project_namespace,
+            project_root=self.project_root,
+            static_extra=self.fivem_static_extra(),
         )
 
 

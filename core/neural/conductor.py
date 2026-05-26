@@ -137,6 +137,7 @@ class Conductor:
         memory_namespace: str | None = None,
         reflux_top_k: int = 5,
         max_tool_iterations: int = 10,
+        static_extra: str | None = None,
     ) -> None:
         provider = build_provider(profile)
         self.ctx = SessionCtx(
@@ -165,6 +166,8 @@ class Conductor:
         # 默认用 project_root 名称作为项目命名空间，避免不同项目互窜
         self.memory_namespace = memory_namespace or self.project_root.name
         self.reflux_top_k = reflux_top_k
+        # 启动期固定注入到 system prompt 的额外片段（如 FiveM 项目身份卡）
+        self.static_extra = static_extra
 
         self.audit.emit(
             AuditEvent(
@@ -218,13 +221,17 @@ class Conductor:
                 )
 
         def _system_prompt() -> str:
-            extras = [reflux_text] if reflux_text else None
+            extras: list[str] = []
+            if self.static_extra:
+                extras.append(self.static_extra)
+            if reflux_text:
+                extras.append(reflux_text)
             return build_system_prompt(
                 mode=self.ctx.mode,
                 temperature=self.ctx.temperature,
                 assistant_alias=self.ctx.assistant_alias,
                 user_alias=self.ctx.user_alias,
-                extra_fragments=extras,
+                extra_fragments=extras or None,
             )
 
         for iteration in range(self.max_tool_iterations):

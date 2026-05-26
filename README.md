@@ -6,31 +6,49 @@ FiveM 资源插件开发 + 服务器运维治理双线助手。深度熟悉 QBCo
 **也帮你写 NPC 插件**：ped 配置、巡逻 AI、对话树、行为状态机、qb-target / ox_target 交互——产物是 Lua 代码与 JSON 配置，运行时由 FiveM server 自己跑。玄玑不直接控制运行中的游戏世界。
 
 [![python](https://img.shields.io/badge/python-3.12+-blue)](https://www.python.org/)
-[![status](https://img.shields.io/badge/status-0.3.0%20alpha-orange)]()
-[![tests](https://img.shields.io/badge/tests-173%20passed-brightgreen)]()
-[![tools](https://img.shields.io/badge/tools-23%20registered-blueviolet)]()
+[![status](https://img.shields.io/badge/status-0.4.0%20alpha-orange)]()
+[![tests](https://img.shields.io/badge/tests-204%20passed-brightgreen)]()
+[![tools](https://img.shields.io/badge/tools-26%20registered-blueviolet)]()
 
-## 当前进度（0.3.0 · M3 全家桶闭环）
+## 当前进度（0.4.0 · FiveM 专精层）
 
-- [x] **M0 骨架**：项目结构、uv、ruff、mypy strict、pytest
-- [x] **LLM 抽象**：跨厂商统一消息/内容块/Delta + Anthropic / OpenAI / DeepSeek 三家 Provider
-- [x] **配置系统**：跨平台 JSON 配置 + 四种 profile kind
-- [x] **玄玑人设**：5 模式 × 3 温度 + 双向可调称呼 + 自演化导引
-- [x] **天枢台 Conductor**：唯一调度入口 + 多轮 tool loop + reflux 自动注入
-- [x] **百工坊 / 司辰阁 / 工造司**：Tool/Registry + Gate 中间件 + InProc 沙箱
-- [x] **稷下学宫**：SQLite FTS5 + jieba 中文分词 + 向量混合检索 + 5 套 FiveM 种子
-- [x] **怀玉阁**：SQLite + 三层 scope × 三类 kind + 衰减 Reflux
-- [x] **0.2 自演化**：知识 ingestion / 记忆主动读写 / 技能系统 / propose_tool
-- [x] **0.3 群英会**：Supervisor + 三角色 sub-agent（researcher / coder / reviewer）
-- [x] **0.3 爬虫**：BFS + 域名白名单 + 增量去重 + crawl_site 工具
-- [x] **0.3 ToolFactory**：propose → generate(LLM) → test(subprocess) → publish 四步链路
-- [x] **0.3 服务层**：FastAPI + WebSocket 流式聊天 + 7 个 REST 端点
-- [x] **0.3 Web 前端**：嵌入式单页 HTML，原生 WS，HITL 弹卡
-- [x] **0.3 Tauri 桌面**：Tauri 2 配置 + Python 后端自启
-- [x] **23 个工具** · **CLI 8 个子命令族** · **173 个单测** · **三件套全绿**
+- [x] **M0~M3 全部里程碑闭环**（见 CHANGELOG）
+- [x] **0.4 FiveM 专精层** ✨
+  - 项目识别器：进 resource 目录自动 detect QBCore/QBox/ESX/OX
+  - 6 套 scaffold 预设 + 一键 `xuanji fivem new <name>`
+  - resource 静态分析器：抽 exports / events / API 调用
+  - **自学习预设**：玄玑读现有 resource → 提交预设草案 → 小宝 review → 激活
+- [x] **26 个工具** · **CLI 10 个子命令族** · **204 个单测** · **三件套全绿**
 
-**未做（M4+ 待续）**：LanceDB 真实 embedder、合议式 Council、ToolFactory 接 sub-agent
-做 codegen review、Subprocess/Docker/WASM 沙箱档、移动端、远程 collab。
+## 0.4.0 典型使用流程
+
+```bash
+# 进 server bundle 根目录或单个 resource 目录
+cd ~/fivem-server/resources/[jobs]/my-bank
+
+# 玄玑自动识别项目类型
+uv run xuanji fivem detect
+# → framework=qbox, inventory=ox_inventory, target=ox_target
+
+# 一键起一个新 resource
+uv run xuanji fivem new my-shop --preset qbox-basic
+# → 生成 fxmanifest + client/server/shared 骨架
+
+# 让玄玑读一个现有 resource 学习
+uv run xuanji fivem analyze ./some-resource
+# → 列出 exports / events / API 调用频率
+
+# 进对话让玄玑深度学习并提案新预设
+uv run xuanji chat
+# > "把 ./my-bank 的实现模式凝成一个 qbcore-banking 预设"
+# 玄玑会调 detect_project + analyze_resource + read_file + propose_preset
+
+# review 玄玑提交的草案
+uv run xuanji preset list
+uv run xuanji preset show qbcore-banking --body
+uv run xuanji preset accept qbcore-banking
+# → 之后 xuanji fivem new --preset qbcore-banking 就能用
+```
 
 ## 启动
 
