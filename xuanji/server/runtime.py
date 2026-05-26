@@ -52,6 +52,7 @@ from xuanji.tools import (
 )
 from xuanji.tools.fivem import fivem_tools
 from xuanji.tools.ingest_url import IngestUrlTool
+from xuanji.tools.project import project_memory_tools
 
 
 class ServerRuntime:
@@ -121,6 +122,8 @@ class ServerRuntime:
                 registry.register(published)
         # FiveM 三件套：detect_project / analyze_resource / propose_preset
         registry.register_all(fivem_tools(self.scaffold_engine))
+        # 项目级记忆：read/init XUANJI.md
+        registry.register_all(project_memory_tools())
         # MCP：若 attach_mcp 已跑过，把收编的远程工具一并塞进来
         if self.mcp_registry is not None:
             for adapter in self.mcp_registry.all_adapters():

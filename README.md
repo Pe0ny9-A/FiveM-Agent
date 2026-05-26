@@ -7,9 +7,9 @@ FiveM 资源插件开发 + 服务器运维治理双线助手。深度熟悉 QBCo
 
 [![PyPI](https://img.shields.io/pypi/v/xuanji-fivem?color=blue)](https://pypi.org/project/xuanji-fivem/)
 [![python](https://img.shields.io/badge/python-3.12+-blue)](https://www.python.org/)
-[![status](https://img.shields.io/badge/status-0.8.0%20alpha-orange)]()
-[![tests](https://img.shields.io/badge/tests-337%20passed-brightgreen)]()
-[![tools](https://img.shields.io/badge/tools-29%20registered-blueviolet)]()
+[![status](https://img.shields.io/badge/status-0.9.2%20alpha-orange)]()
+[![tests](https://img.shields.io/badge/tests-407%20passed-brightgreen)]()
+[![tools](https://img.shields.io/badge/tools-31%20registered-blueviolet)]()
 
 ## 安装
 
@@ -32,7 +32,7 @@ pip install 'xuanji-fivem[vector]'
 
 首次跑 `xuanji init` 走交互式向导：填 API Key、导入 FiveM 种子知识、做一次连通性测试。`xuanji doctor` 全绿后就能日常用。
 
-## 当前进度（0.8.0）
+## 当前进度（0.9.2）
 
 - [x] **M0~M3 全部里程碑闭环**（见 [CHANGELOG.md](CHANGELOG.md)）
 - [x] **0.4 FiveM 专精层** — 项目识别 / 6 套预设 / 静态分析 / 自学习预设
@@ -40,13 +40,20 @@ pip install 'xuanji-fivem[vector]'
 - [x] **0.6 异构路由 + MCP 客户端** — ModelRouter 跨厂商挑选 + 收编外部 MCP server 工具
 - [x] **0.7 互通四件套** — Subprocess Sandbox / MCP Server / Skills / Hooks，与 Claude Code/Codex 双向迁移
 - [x] **0.8 真 LanceDB + Hooks `--explain` + 内置示范 skill/hook + 公开 PyPI 首发**
-- [x] **29 个工具** · **CLI 12 个子命令族** · **337 个单测** · **三件套全绿（92 源文件 0 告警）**
+- [x] **0.9.0 ToolFactory 闭环 + published 自动加载**
+- [x] **0.9.1 三家 Provider 各自适配 + 上下文自动压缩**
+- [x] **0.9.2 项目级 XUANJI.md + CLI 状态栏 + 思维链开关 + 会话恢复**
+- [x] **31 个工具** · **CLI 13 个子命令族** · **407 个单测** · **三件套全绿**
 
 ## 典型使用流程
 
 ```bash
 # 进 server bundle 根目录或单个 resource 目录
 cd ~/fivem-server/resources/[jobs]/my-bank
+
+# 让玄玑认识这个项目（自动生成 XUANJI.md 项目宪法）
+xuanji project init
+# → 用 detect 结果填好 framework / inventory / target，小宝再补关键约定
 
 # 玄玑自动识别项目类型
 xuanji fivem detect
@@ -140,9 +147,14 @@ xuanji                              # 顶层帮助
 ├── fivem
 │   ├── detect / presets / new
 │   └── analyze
-└── preset
-    ├── list / show
-    └── accept / reject / remove
+├── preset
+│   ├── list / show
+│   └── accept / reject / remove
+└── project                         # 项目级 XUANJI.md 项目宪法
+    ├── init [--overwrite]          # 用 detector 结果生成模板
+    ├── show                        # 打印当前项目 + 用户级 XUANJI.md
+    ├── path                        # 列出查找路径与命中位置
+    └── edit                        # 用 $EDITOR 打开（Windows 兜底 notepad）
 ```
 
 ## 自演化能力（0.2 起）
@@ -156,9 +168,30 @@ xuanji                              # 顶层帮助
 | **记忆**（事实/事件/套路） | `write_memory` / `recall_memory` | 屏蔽 working scope，写入仅限 session/project/user |
 | **技能**（procedural） | `save_skill` / `search_skill` / `run_skill` | 写到 `skills` namespace |
 | **Skill 文件**（CC/Codex 互通） | `list_skill_files` / `match_skill_file` / `read_skill_file` | 文件系统级，与 Claude Code 双向迁移 |
+| **项目记忆**（XUANJI.md） | `read_project_memory` / `init_project_memory` | RiskTag.IO，覆盖既有需 `overwrite=true` |
 | **工具**（Python 代码） | `propose_tool` | **草案落磁盘，玄玑不能自动 publish**——人工 review 后才能成真工具 |
 | **群英会** | `dispatch_subagent` | 召唤 sub-agent（稷下生 / 百工匠 / 司鉴 / 天枢令）跑专项 |
 | **自察** | `list_tools` / `describe_tool` / `list_skills` / `read_skill` | SAFE，零副作用 |
+
+## 项目级记忆 · XUANJI.md（0.9.2）
+
+每个 FiveM 项目都可以放一份 `XUANJI.md`——玄玑进入这个目录就自动加载到 system prompt，
+作为该项目的"宪法"。优先级高于用户级 XUANJI.md（在 `%APPDATA%\xuanji\XUANJI.md`）。
+
+```bash
+# 用 detector 结果生成模板
+xuanji project init
+# → 自动填好 framework / inventory / target，小宝再补"关键约定"和"禁区"
+
+# 检查当前项目载入了什么
+xuanji project show
+
+# $EDITOR 打开编辑（Windows 兜底 notepad）
+xuanji project edit
+```
+
+也可以直接和玄玑说"帮我熟悉这个项目"，它会调 `init_project_memory` 工具。
+查找规则：从 cwd 向上沿目录树最多 12 层，第一个命中就停。
 
 ## 跨工具互通
 
@@ -230,15 +263,30 @@ xuanji                              # 顶层帮助
 ## 质量门
 
 ```bash
-uv run ruff check xuanji/ tests/    # 92 源文件 0 告警
+uv run ruff check xuanji/ tests/    # 0 告警
 uv run mypy xuanji/                 # strict 模式 0 告警
-uv run pytest                       # 337 测试全过
+uv run pytest                       # 407 测试全过
 ```
+
+## CLI 对话体验（0.9.2）
+
+借鉴 Claude Code 的对话 UI，每轮回复底下都有一行紧凑状态栏：
+
+```
+  claude-sonnet-4-6@anthropic  ·  本轮 in 1.2k  out 567  cache 8.9k↓  ·
+  累计 7.0k (in 5.0k / out 2.0k / cache 12.0k)  ·  ctx 12% (10.1k/80.0k)  ·
+  3 轮  ·  8 msg  ·  chat/balanced  ·  think off  ·  default
+```
+
+- 模型 / 本轮 token / 累计 token / 上下文百分比 / 轮数 / 模式 / profile 一栏看完
+- `/think` 切换思维链显示，状态会落到 `chat_ui.show_thinking` 跨会话保留
+- `/stats` 任何时候拉出最新统计
+- 退出后会保存最近一次对话，下次启动若 profile/model 一致会问要不要恢复
+- `/forget` 清掉磁盘上的会话快照
 
 ## 路线图
 
-- **0.9** — 工具工厂闭环（generate / test / publish CLI 全打通 + published 自动加载）
-- **1.0** — M4 完结：议会式群英会（Council + Judge）+ API 稳定性审计
+- **1.0** — M4 完结：议会式群英会（Council + Judge）+ API 稳定性审计 + 真实 LLM 长连接评测
 
 ## 链接
 

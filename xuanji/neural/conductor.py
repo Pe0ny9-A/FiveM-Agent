@@ -177,6 +177,12 @@ class Conductor:
         self.hooks = hooks
         # 自动上下文压缩：默认开启，超 max_context_tokens 折叠头部
         self.compaction = compaction or CompactionConfig()
+        # 项目级 + 用户级 XUANJI.md 片段，启动期采集一次缓存进 SessionCtx
+        # （在每条消息前都拼到 system prompt 里，权重高于 reflux）
+        # 延迟 import 打破 conductor → persona → config → store → neural 的循环。
+        from xuanji.persona.project_memory import collect_xuanji_fragments
+
+        self._xuanji_md_fragments: list[str] = collect_xuanji_fragments(self.project_root)
 
         self.audit.emit(
             AuditEvent(
@@ -190,6 +196,7 @@ class Conductor:
                     "assistant_alias": assistant_alias,
                     "user_alias": user_alias,
                     "tools": self.registry.names(),
+                    "xuanji_md_fragments": len(self._xuanji_md_fragments),
                 },
             ),
         )
@@ -233,6 +240,8 @@ class Conductor:
             extras: list[str] = []
             if self.static_extra:
                 extras.append(self.static_extra)
+            # XUANJI.md 项目宪法 — 用户级 + 项目级，项目级靠后权重更高
+            extras.extend(self._xuanji_md_fragments)
             if reflux_text:
                 extras.append(reflux_text)
             return build_system_prompt(

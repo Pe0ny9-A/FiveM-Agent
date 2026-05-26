@@ -8,6 +8,7 @@
 """
 
 from xuanji.config.paths import (
+    chat_session_last_path,
     config_dir,
     config_file_path,
     crawl_cache_path,
@@ -43,6 +44,7 @@ __all__ = [
     "Profile",
     "ProfileKind",
     "XuanjiConfig",
+    "chat_session_last_path",
     "config_dir",
     "config_file_path",
     "crawl_cache_path",

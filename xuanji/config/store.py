@@ -22,6 +22,17 @@ from xuanji.neural.compaction import CompactionConfig
 from xuanji.persona.modes import PersonaTemperature
 
 
+class ChatUIConfig(BaseModel):
+    """CLI 聊天框 UI 偏好。
+
+    show_thinking: 是否在终端打印 thinking_delta 思维链文本。
+    思维链对调试模型推理过程有用，但对日常对话是噪音；
+    默认关闭，用户可在 CLI 里 `/think on|off` 实时切换。
+    """
+
+    show_thinking: bool = False
+
+
 class XuanjiConfig(BaseModel):
     """配置文件的根 schema。"""
 
@@ -42,6 +53,10 @@ class XuanjiConfig(BaseModel):
     compaction: CompactionConfig = Field(
         default_factory=CompactionConfig,
         description="上下文自动压缩。超 max_context_tokens 时折叠 history 头部",
+    )
+    chat_ui: ChatUIConfig = Field(
+        default_factory=ChatUIConfig,
+        description="CLI 聊天框 UI 偏好（如是否显示 thinking 思维链）",
     )
 
     def get_active(self) -> Profile | None:

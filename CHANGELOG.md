@@ -2,6 +2,93 @@
 
 所有重要的变更都记在这里。版本号遵守 [SemVer](https://semver.org/lang/zh-CN/)。
 
+## [0.9.2] — 2026-05-26
+
+**项目级 XUANJI.md 项目宪法 + CLI 对话状态栏 + 思维链开关 + 会话恢复**。
+
+0.9.x 之前玄玑只读用户级偏好，跨项目时容易把 QBox 项目的约定带到 ESX 项目里。
+0.9.2 引入**项目级 XUANJI.md**：进哪个项目就读哪个，权重高于用户级，专治"这个项目用 QBox 不是 QBCore"
+反复要再说一遍的痛点。同时把 CLI 对话体验也补齐：底部状态栏一眼看到 token、上下文占用、模式、模型。
+
+### Added · 项目级 XUANJI.md（项目宪法）
+
+- 新模块 [xuanji/persona/project_memory.py](xuanji/persona/project_memory.py)：
+  从 cwd 沿目录树最多 12 层向上找 `XUANJI.md`，命中即停。
+- **优先级**：用户级先注入 → 项目级后注入（model 对靠后的 prompt 更敏感，
+  自然实现"局部覆盖全局"）。
+- 在 [Conductor.__init__](xuanji/neural/conductor.py#L180) 启动期采集一次缓存进 `_xuanji_md_fragments`，
+  每条消息前都拼到 system prompt extras 里（位于 `static_extra` 之后、reflux 之前）。
+- 默认模板会用 `detect_fivem_context` 结果填好 framework / inventory / target 字段，
+  detector 失败用占位符不阻塞 init。
+
+### Added · `xuanji project` CLI 子命令
+
+- `xuanji project init [--overwrite]` — 在当前 cwd 写 XUANJI.md 模板
+- `xuanji project show` — 打印当前项目级 + 用户级 XUANJI.md 内容
+- `xuanji project path` — 列出查找路径与命中位置
+- `xuanji project edit` — 用 `$EDITOR` 打开编辑（Windows 兜底 notepad）
+
+### Added · 玄玑可调用的项目记忆工具
+
+- `read_project_memory`（RiskTag.SAFE）— 玄玑回答前可先看项目宪法
+- `init_project_memory`（RiskTag.IO）— 用户说"帮我熟悉这个项目"时玄玑可主动写
+
+均在 [xuanji/tools/project.py](xuanji/tools/project.py)，已注入 [ServerRuntime.build_registry](xuanji/server/runtime.py)。
+
+### Added · CLI 对话底部状态栏
+
+每轮回复后渲染一行紧凑状态栏（[xuanji/cli.py](xuanji/cli.py) 的 `_print_status_bar`）：
+
+```
+  claude-sonnet-4-6@anthropic  ·  本轮 in 1.2k  out 567  cache 8.9k↓  ·
+  累计 7.0k (in 5.0k / out 2.0k / cache 12.0k)  ·  ctx 12% (10.1k/80.0k)  ·
+  3 轮  ·  8 msg  ·  chat/balanced  ·  think off  ·  default
+```
+
+- 模型 / provider / 本轮 token（in/out/cache↓↑）
+- 累计 token、ctx 占用百分比（按 `compaction.max_context_tokens` 算，绿/黄/红三档）
+- 轮数 / history 长度 / persona mode/temperature / `think on/off` / profile 名
+- `_format_tokens` 大数字带 k/M 后缀让一行装得下
+- 新增 `/stats` 斜杠命令随时拉出来看
+
+### Added · `/think` 思维链开关 + 会话恢复
+
+- `/think on|off` 切换思维块显示，状态落 `chat_ui.show_thinking` 跨会话保留
+- 退出后写 `last_session.json` 快照，下次启动若 profile/model 一致会问要不要恢复
+- `/forget` 清掉磁盘快照
+
+### 单测
+
+- `tests/test_project_memory.py` — 12 个：树向上查找 / 空文件视为缺失 / 用户/项目顺序 / init 拒绝覆盖 / 自定义内容 / 模板字段替换
+- `tests/test_project_memory_tools.py` — 7 个：read 命中/缺失、init 创建/拒绝/覆盖/自定义
+
+### 修复 · 循环导入
+
+`Conductor.__init__` 通过 `xuanji.persona.project_memory` 触发了
+`xuanji.config.__init__ → store → compaction → neural → conductor` 的循环。
+解法：把 `from xuanji.persona.project_memory import collect_xuanji_fragments`
+**移到 `__init__` 方法体内**做延迟 import（[conductor.py:183](xuanji/neural/conductor.py#L183)），
+等 module 全加载完再触发，循环就断了。
+
+### 质量
+
+| | |
+|---|---|
+| 单测 | **407 全过**（379 → 407，+28：19 项目记忆 + 状态栏/思维链/会话恢复回归） |
+| ruff | **0 告警** |
+| mypy strict | **0 告警** |
+| 工具数 | 静态 31（新增 `read_project_memory` / `init_project_memory`）+ published 动态加载 |
+| CLI 命令族 | 13（新增 `project`）|
+
+### 升级提示
+
+- 升完后到任意 FiveM 项目根跑 `xuanji project init`，玄玑下一次进这个目录会自动读到。
+- 状态栏自动出现，无需配置；想看自定义统计直接打 `/stats`。
+- 用户级 XUANJI.md 默认不存在；想加全局偏好可写到
+  `%APPDATA%\xuanji\XUANJI.md`（macOS / Linux 同 config_dir）。
+
+---
+
 ## [0.9.1] — 2026-05-26
 
 **三家 Provider 各自适配，每家发挥最强性能 + 上下文自动压缩**。

@@ -20,6 +20,7 @@
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import sys
 from pathlib import Path
 from typing import Any
@@ -65,8 +66,16 @@ from xuanji.fivem.scaffold import ScaffoldEngine
 from xuanji.gate.bridge import HITLBridge
 from xuanji.knowledge import SqliteKnowledgeStore
 from xuanji.knowledge.sources import seed_chunks, seed_sources, seed_symbols
+from xuanji.llm.providers.base import Message
 from xuanji.llm.providers.factory import build_provider
 from xuanji.memory import Memory, MemoryKind, MemoryScope, SqliteMemoryStore
+from xuanji.neural.session_store import (
+    ChatSessionSnapshot,
+    clear_last_session,
+    format_age,
+    load_last_session,
+    save_last_session,
+)
 
 app = typer.Typer(
     add_completion=False,
@@ -115,8 +124,13 @@ preset_app = typer.Typer(
     help="Scaffold 预设管理：列出 / 查看 / 接受/拒绝 玄玑提交的预设草案",
     no_args_is_help=True,
 )
+project_app = typer.Typer(
+    help="项目级记忆：XUANJI.md 创建 / 查看 / 路径定位",
+    no_args_is_help=True,
+)
 app.add_typer(fivem_app, name="fivem")
 app.add_typer(preset_app, name="preset")
+app.add_typer(project_app, name="project")
 
 console = Console()
 
@@ -1859,22 +1873,225 @@ def preset_remove(
         raise typer.Exit(1)
 
 
+# ---------- project（XUANJI.md 项目级记忆）----------
+
+
+@project_app.command("init")
+def project_init_cmd(
+    overwrite: bool = typer.Option(
+        False, "--overwrite", "-f", help="覆盖已有 XUANJI.md（默认禁止）"
+    ),
+    path: Path | None = typer.Option(
+        None, "--path", "-p", help="目标项目根，不指定则用当前目录"
+    ),
+) -> None:
+    """在工程根创建 XUANJI.md 项目记忆模板。
+
+    会跑一次 detector 把 framework / inventory / target 填进模板，小宝再补充约定与禁区。
+    """
+    from xuanji.persona.project_memory import init_project_xuanji_md
+
+    root = (path or Path.cwd()).resolve()
+    try:
+        target_path, created = init_project_xuanji_md(root, overwrite=overwrite)
+    except FileExistsError as e:
+        console.print(f"[red]{e}[/red]")
+        console.print("[dim]加 --overwrite 强制覆盖，或先用 [bold]xuanji project show[/bold] 看现状。[/dim]")
+        raise typer.Exit(1) from None
+    action = "已创建" if created else "已覆盖"
+    console.print(f"[green]{action}：{target_path}[/green]")
+    console.print("[dim]进入该目录后再跑 [bold]xuanji chat[/bold]，玄玑会自动加载这份项目宪法。[/dim]")
+
+
+@project_app.command("show")
+def project_show_cmd(
+    path: Path | None = typer.Option(
+        None, "--path", "-p", help="目标目录，不指定则从当前目录沿目录树向上找"
+    ),
+) -> None:
+    """打印当前项目级 + 用户级 XUANJI.md（如果有）。"""
+    from xuanji.persona.project_memory import (
+        load_project_xuanji_md,
+        load_user_xuanji_md,
+        user_xuanji_md_path,
+    )
+
+    start = (path or Path.cwd()).resolve()
+    proj = load_project_xuanji_md(start)
+    user_text = load_user_xuanji_md()
+
+    if proj is None and user_text is None:
+        console.print("[dim]还没有任何 XUANJI.md。先跑 [bold]xuanji project init[/bold]。[/dim]")
+        raise typer.Exit()
+
+    if user_text is not None:
+        console.print(
+            Panel(
+                Markdown(user_text),
+                title=f"[cyan]用户级 · {user_xuanji_md_path()}[/cyan]",
+                title_align="left",
+                border_style="cyan",
+            )
+        )
+    if proj is not None:
+        path_, text = proj
+        console.print(
+            Panel(
+                Markdown(text),
+                title=f"[magenta]项目级 · {path_}[/magenta]",
+                title_align="left",
+                border_style="magenta",
+            )
+        )
+
+
+@project_app.command("path")
+def project_path_cmd() -> None:
+    """打印当前 cwd 沿目录树查到的 XUANJI.md 路径。"""
+    from xuanji.persona.project_memory import (
+        find_project_xuanji_md,
+        user_xuanji_md_path,
+    )
+
+    proj = find_project_xuanji_md()
+    user_path = user_xuanji_md_path()
+    console.print(f"[dim]用户级：[/dim]{user_path}{' [green](存在)[/green]' if user_path.is_file() else ' [dim](未创建)[/dim]'}")
+    if proj is None:
+        console.print("[dim]项目级：未找到（沿目录树向上未命中 XUANJI.md）[/dim]")
+    else:
+        console.print(f"[magenta]项目级：[/magenta]{proj} [green](存在)[/green]")
+
+
+@project_app.command("edit")
+def project_edit_cmd(
+    user: bool = typer.Option(
+        False, "--user", "-u", help="编辑用户级 XUANJI.md 而非项目级"
+    ),
+) -> None:
+    """用 $EDITOR 打开 XUANJI.md 编辑（项目级或用户级）。
+
+    Windows 默认 notepad，类 Unix 用 $EDITOR 或 vi。
+    """
+    import os
+    import subprocess
+
+    from xuanji.persona.project_memory import (
+        find_project_xuanji_md,
+        init_project_xuanji_md,
+        user_xuanji_md_path,
+    )
+
+    if user:
+        target_path = user_xuanji_md_path()
+        if not target_path.is_file():
+            target_path.parent.mkdir(parents=True, exist_ok=True)
+            target_path.write_text(
+                "# 玄玑 · 用户级 XUANJI.md\n\n> 跨项目共享的偏好与规则。\n",
+                encoding="utf-8",
+            )
+            console.print(f"[dim]已新建空白用户级模板：{target_path}[/dim]")
+    else:
+        proj = find_project_xuanji_md()
+        if proj is None:
+            console.print("[dim]当前目录没有项目级 XUANJI.md，先帮你建一个。[/dim]")
+            target_path, _ = init_project_xuanji_md(Path.cwd().resolve(), overwrite=False)
+        else:
+            target_path = proj
+
+    editor = os.environ.get("EDITOR") or ("notepad" if sys.platform == "win32" else "vi")
+    console.print(f"[dim]启动 {editor} 编辑：{target_path}[/dim]")
+    try:
+        subprocess.run([editor, str(target_path)], check=False)
+    except FileNotFoundError:
+        console.print(f"[red]找不到编辑器 {editor}，把 $EDITOR 设到合适的程序后再试。[/red]")
+        raise typer.Exit(1) from None
+
+
 # ---------- chat ----------
 
 
-def _greet(profile_name: str, kind: str, model: str, assistant_alias: str, user_alias: str, tools: list[Tool]) -> None:
-    text = Text()
-    text.append("玄玑 · ", style="bold magenta")
-    text.append("北斗第三星，主调度运转\n", style="dim")
-    text.append(f"当前 profile：{profile_name}（{kind} · {model}）\n", style="cyan")
+# ---- Chat UI 风格表（借鉴 Claude Code）----
+# ●  assistant 文本起始符（粉品红）
+# ⏺  工具调用起始符（青）
+# ⎿  工具子项缩进符（暗灰）
+# ✱  思维链起始符（紫）
+# >  用户输入提示符（粗青）
+_ICON_ASSISTANT = "●"
+_ICON_TOOL = "⏺"
+_ICON_SUB = "⎿"
+_ICON_THINK = "✱"
+_ICON_USER = "›"
+
+_SLASH_HINTS = "/help · /model · /stats · /clear · /exit"
+
+_HELP_TEXT = """\
+[bold]斜杠命令[/bold]
+  [cyan]/help[/cyan]      显示本帮助
+  [cyan]/model[/cyan]     显示当前模型与 profile
+  [cyan]/stats[/cyan]     显示当前会话累计统计（token/上下文/轮数）
+  [cyan]/think[/cyan]     切换是否显示思维链（on / off / 不带参数翻转）
+  [cyan]/clear[/cyan]     清屏（保留会话上下文）
+  [cyan]/reset[/cyan]     重置会话（清空历史与思维链）
+  [cyan]/forget[/cyan]    删除磁盘上的会话快照（启动时不再提示恢复）
+  [cyan]/exit[/cyan]      退出（也可用 Ctrl+D 或空行）
+
+[bold]小贴士[/bold]
+  • 直接输入文字开始对话，[dim]Enter[/dim] 发送
+  • 工具调用会以 [cyan]⏺[/cyan] 标出，子项缩进显示
+  • 思维链以 [magenta]✱[/magenta] 标出（仅 thinking 模型 · 默认关闭）
+  • 每轮对话后会显示状态栏：模型 / 本轮 / 累计 / ctx / 轮数 / 模式
+  • 退出后会保存最近一次对话，下次启动可恢复
+"""
+
+
+def _greet(
+    profile_name: str,
+    kind: str,
+    model: str,
+    assistant_alias: str,
+    user_alias: str,
+    tools: list[Tool],
+    show_thinking: bool = False,
+) -> None:
+    """开场屏：紧凑式头部 + 提示行，仿 Claude Code 启动样式。"""
+    title = Text()
+    title.append("玄玑", style="bold magenta")
+    title.append("  ", style="")
+    title.append("北斗第三星·主调度运转", style="dim italic")
+
+    body = Text()
+    body.append("  profile  ", style="dim")
+    body.append(f"{profile_name}", style="cyan")
+    body.append("  ", style="")
+    body.append(f"({kind} · {model})\n", style="dim")
+    body.append("  tools    ", style="dim")
+    body.append(f"{len(tools)} 个", style="green")
     if tools:
-        names = "、".join(t.name for t in tools)
-        text.append(f"工具：{names}\n", style="green")
-    text.append(
-        f"{assistant_alias}在这儿，{user_alias}有什么想聊的？输入空行退出。\n",
-        style="italic",
+        body.append("  ", style="")
+        # 只展示前 4 个工具名，多了省略
+        preview = "、".join(t.name for t in tools[:4])
+        if len(tools) > 4:
+            preview += f"…（+{len(tools) - 4}）"
+        body.append(f"[{preview}]", style="dim")
+    body.append("\n  thinking ", style="dim")
+    body.append("on" if show_thinking else "off", style="green" if show_thinking else "dim")
+    body.append("    ", style="")
+    body.append("（/think 切换）", style="dim")
+    body.append("\n  hints    ", style="dim")
+    body.append(_SLASH_HINTS, style="dim cyan")
+
+    console.print()
+    console.print(title)
+    console.print(Text("  ─────────────────────────────────────────", style="dim"))
+    console.print(body)
+    console.print()
+    console.print(
+        Text(
+            f"  {assistant_alias}在这儿，{user_alias}随时开聊。",
+            style="italic dim",
+        )
     )
-    console.print(Panel(text, border_style="magenta"))
+    console.print()
 
 
 class ConsoleHITL(HITLBridge):
@@ -1888,39 +2105,282 @@ class ConsoleHITL(HITLBridge):
         reason: str,
     ) -> bool:
         body = Text()
-        body.append("司辰阁拦截 · 高危操作待确认\n\n", style="bold yellow")
-        body.append(f"工具：{tool.name}（risk={tool.risk.value}）\n", style="cyan")
-        body.append(f"原因：{reason}\n", style="yellow")
-        body.append("\n参数：\n", style="dim")
-        for k, v in args.items():
-            v_str = str(v)
-            if len(v_str) > 200:
-                v_str = v_str[:200] + "…"
-            body.append(f"  {k}: ", style="cyan")
-            body.append(f"{v_str}\n")
-        console.print(Panel(body, border_style="yellow", title="[yellow]司辰阁[/yellow]"))
+        body.append(f"工具  {tool.name}", style="bold cyan")
+        body.append(f"  (risk={tool.risk.value})\n", style="dim")
+        body.append(f"原因  {reason}\n", style="yellow")
+        if args:
+            body.append("参数\n", style="dim")
+            for k, v in args.items():
+                v_str = str(v)
+                if len(v_str) > 200:
+                    v_str = v_str[:200] + "…"
+                body.append(f"  {k}: ", style="cyan")
+                body.append(f"{v_str}\n", style="")
+        console.print(
+            Panel(
+                body,
+                title="[bold yellow]司辰阁 · 高危操作待确认[/bold yellow]",
+                title_align="left",
+                border_style="yellow",
+                padding=(1, 2),
+            )
+        )
         return typer.confirm("放行此操作？", default=False)
 
 
 def _render_tool_event(delta) -> None:  # type: ignore[no-untyped-def]
-    """在流式输出中以独立 panel 渲染工具运行事件。"""
+    """以缩进式列表渲染工具运行事件（Claude Code 风格）。
+
+    样式：
+      ⏺ tool_name(args)
+        ⎿  ✓ 完成 (32ms)
+    """
     if delta.type == "tool_run_started":
-        args_str = ", ".join(f"{k}={v!r}" for k, v in (delta.args_final or {}).items())
-        console.print(
-            f"[dim cyan]→ 调用 {delta.tool_name}({args_str})[/dim cyan]"
-        )
+        args_pairs = []
+        for k, v in (delta.args_final or {}).items():
+            v_repr = repr(v)
+            if len(v_repr) > 60:
+                v_repr = v_repr[:60] + "…"
+            args_pairs.append(f"{k}={v_repr}")
+        args_str = ", ".join(args_pairs)
+        line = Text()
+        line.append(f"{_ICON_TOOL} ", style="bold cyan")
+        line.append(f"{delta.tool_name}", style="bold")
+        line.append(f"({args_str})", style="dim")
+        console.print(line)
     elif delta.type == "tool_run_blocked":
-        console.print(f"[red]× 已拦截：{delta.tool_run_reason}[/red]")
+        line = Text()
+        line.append(f"  {_ICON_SUB}  ", style="dim")
+        line.append("× 已拦截", style="bold red")
+        line.append(f"  {delta.tool_run_reason}", style="red")
+        console.print(line)
     elif delta.type == "tool_run_done":
+        line = Text()
+        line.append(f"  {_ICON_SUB}  ", style="dim")
         if delta.tool_run_ok:
-            console.print(
-                f"[green]✓ {delta.tool_name} 完成[/green] "
-                f"[dim]({delta.tool_run_duration_ms}ms)[/dim]"
-            )
+            line.append("✓ 完成", style="bold green")
+            line.append(f"  ({delta.tool_run_duration_ms}ms)", style="dim")
         else:
-            console.print(
-                f"[red]× {delta.tool_name} 失败：{delta.tool_run_error}[/red]"
+            line.append("× 失败", style="bold red")
+            err = (delta.tool_run_error or "")[:120]
+            line.append(f"  {err}", style="red")
+        console.print(line)
+
+
+def _print_assistant_marker() -> None:
+    """assistant 段落起始符：● (粉品红)。"""
+    line = Text()
+    line.append(f"{_ICON_ASSISTANT} ", style="bold magenta")
+    console.print(line, end="")
+
+
+def _print_thinking_marker() -> None:
+    """thinking 段落起始符：✱ Thinking…（暗紫）。"""
+    line = Text()
+    line.append(f"{_ICON_THINK} ", style="magenta")
+    line.append("Thinking…", style="dim italic magenta")
+    console.print(line)
+
+
+def _format_tokens(n: int) -> str:
+    """大数字带 k/M 后缀，让状态栏更紧凑。"""
+    if n < 1000:
+        return str(n)
+    if n < 1_000_000:
+        return f"{n / 1000:.1f}k"
+    return f"{n / 1_000_000:.2f}M"
+
+
+def _print_status_bar(
+    *,
+    provider: str,
+    model: str,
+    profile_name: str,
+    turn_usage: Any,
+    totals: dict[str, int],
+    turn_count: int,
+    history_len: int,
+    max_context_tokens: int,
+    show_thinking: bool,
+    persona_mode: str,
+    persona_temp: str,
+) -> None:
+    """对话框下方的状态条。
+
+    一行式紧凑布局，按视觉权重分组：
+      [模型/profile] · [本轮 in/out/cache] · [累计 in/out/cache] · [上下文 %] · [N 轮]
+    """
+    # 用 (input + cache_read 已经计费的部分) 估算上下文占用
+    ctx_used = turn_usage.input_tokens + turn_usage.cache_read_tokens
+    ctx_pct = min(100, int(ctx_used * 100 / max_context_tokens)) if max_context_tokens else 0
+    ctx_color = "green" if ctx_pct < 50 else "yellow" if ctx_pct < 85 else "red"
+
+    bar = Text()
+    bar.append("  ")
+    # 模型
+    bar.append(f"{model}", style="cyan")
+    bar.append(f"@{provider}", style="dim cyan")
+    bar.append("  ·  ", style="dim")
+    # 本轮 token
+    bar.append("本轮 ", style="dim")
+    bar.append(f"in {_format_tokens(turn_usage.input_tokens)}", style="green")
+    bar.append("  ", style="dim")
+    bar.append(f"out {_format_tokens(turn_usage.output_tokens)}", style="magenta")
+    if turn_usage.cache_read_tokens or turn_usage.cache_write_tokens:
+        bar.append("  ", style="dim")
+        bar.append(
+            f"cache {_format_tokens(turn_usage.cache_read_tokens)}↓",
+            style="cyan",
+        )
+        if turn_usage.cache_write_tokens:
+            bar.append(
+                f"/{_format_tokens(turn_usage.cache_write_tokens)}↑",
+                style="dim cyan",
             )
+    bar.append("  ·  ", style="dim")
+    # 累计
+    total_all = totals["input"] + totals["output"]
+    bar.append("累计 ", style="dim")
+    bar.append(f"{_format_tokens(total_all)}", style="bold")
+    bar.append(
+        f" (in {_format_tokens(totals['input'])} / out {_format_tokens(totals['output'])}",
+        style="dim",
+    )
+    if totals["cache_read"]:
+        bar.append(
+            f" / cache {_format_tokens(totals['cache_read'])}",
+            style="dim",
+        )
+    bar.append(")", style="dim")
+    bar.append("  ·  ", style="dim")
+    # 上下文占用
+    bar.append("ctx ", style="dim")
+    bar.append(f"{ctx_pct}%", style=ctx_color)
+    bar.append(
+        f" ({_format_tokens(ctx_used)}/{_format_tokens(max_context_tokens)})",
+        style="dim",
+    )
+    bar.append("  ·  ", style="dim")
+    # 会话进度
+    bar.append(f"{turn_count} 轮", style="dim")
+    bar.append("  ·  ", style="dim")
+    bar.append(f"{history_len} msg", style="dim")
+    bar.append("  ·  ", style="dim")
+    # 模式与人设
+    bar.append(f"{persona_mode}/{persona_temp}", style="dim")
+    bar.append("  ·  ", style="dim")
+    # 思维链开关
+    bar.append(
+        "think on" if show_thinking else "think off",
+        style="green" if show_thinking else "dim",
+    )
+    bar.append("  ·  ", style="dim")
+    bar.append(profile_name, style="dim")
+
+    console.print(bar)
+
+
+def _handle_slash_command(
+    cmd: str,
+    conductor: Any,
+    state: dict[str, Any],
+) -> bool | None:
+    """处理 /xxx 内置命令。返回值约定：
+    - True：处理完毕，继续 loop
+    - None：不是斜杠命令，按普通输入处理
+    - False：要求退出 loop
+
+    state 是 chat loop 持有的可变状态字典（如 show_thinking 开关），
+    斜杠命令会就地修改它，chat loop 下一轮读到新值。
+    """
+    if not cmd.startswith("/"):
+        return None
+    parts = cmd.split(maxsplit=1)
+    name = parts[0].lower()
+    arg = parts[1].strip().lower() if len(parts) > 1 else ""
+    if name in ("/exit", "/quit", "/q"):
+        return False
+    if name == "/help":
+        console.print()
+        console.print(_HELP_TEXT)
+        console.print()
+        return True
+    if name == "/clear":
+        # 清屏但不清历史
+        console.clear()
+        return True
+    if name == "/reset":
+        # 清空 conductor.ctx.history（保留 system 状态由下一次 send 重建）
+        conductor.ctx.history.clear()
+        console.print("[dim]会话已重置。[/dim]")
+        return True
+    if name == "/model":
+        line = Text()
+        line.append("  当前模型  ", style="dim")
+        line.append(f"{conductor.ctx.model}", style="cyan")
+        line.append("  provider  ", style="dim")
+        line.append(f"{conductor.ctx.provider.name}", style="cyan")
+        console.print()
+        console.print(line)
+        console.print()
+        return True
+    if name == "/stats":
+        # 拉一份"凑出来的"零本轮 usage（cumulative-only 视图）
+        from xuanji.llm.providers.base import Usage as _Usage
+
+        zero = _Usage()
+        totals = state.get("totals") or {
+            "input": 0, "output": 0, "cache_read": 0, "cache_write": 0,
+        }
+        console.print()
+        _print_status_bar(
+            provider=conductor.ctx.provider.name,
+            model=conductor.ctx.model,
+            profile_name=state.get("profile_name", "?"),
+            turn_usage=zero,
+            totals=totals,
+            turn_count=state.get("turn_count", 0),
+            history_len=len(conductor.ctx.history),
+            max_context_tokens=conductor.compaction.max_context_tokens,
+            show_thinking=state.get("show_thinking", False),
+            persona_mode=conductor.ctx.mode.value,
+            persona_temp=conductor.ctx.temperature.value,
+        )
+        console.print()
+        return True
+    if name == "/think":
+        # /think           翻转
+        # /think on/off    显式设置
+        if arg in ("on", "true", "1", "yes"):
+            new_val = True
+        elif arg in ("off", "false", "0", "no"):
+            new_val = False
+        elif arg == "":
+            new_val = not state.get("show_thinking", False)
+        else:
+            console.print(f"[red]/think 参数无效：{arg}[/red]   用法：/think [on|off]")
+            return True
+        state["show_thinking"] = new_val
+        # 落盘到 chat_ui.show_thinking，下次启动也生效
+        try:
+            store = ConfigStore()
+            cfg = store.load()
+            cfg.chat_ui.show_thinking = new_val
+            store.save(cfg)
+        except Exception as e:
+            console.print(f"[dim yellow]（保存失败：{e}）[/dim yellow]")
+        status = "[green]开[/green]" if new_val else "[dim]关[/dim]"
+        console.print(f"  思维链显示  {status}")
+        return True
+    if name == "/forget":
+        removed = clear_last_session()
+        if removed:
+            console.print("[dim]已清除磁盘上的会话快照。[/dim]")
+        else:
+            console.print("[dim]没有可清除的快照。[/dim]")
+        return True
+    console.print(f"[red]未知命令：{name}[/red]   输入 [cyan]/help[/cyan] 看帮助。")
+    return True
 
 
 async def _chat_loop() -> None:
@@ -1943,6 +2403,40 @@ async def _chat_loop() -> None:
         hitl_bridge=ConsoleHITL(),
         registry=registry,
     )
+
+    # 询问是否恢复上次会话（profile/model 一致时才提示，避免 thinking 块灌错端点）
+    snap = load_last_session()
+    if snap is not None and snap.history:
+        if (
+            snap.profile_name == profile_name
+            and snap.provider == conductor.ctx.provider.name
+            and snap.model == conductor.ctx.model
+        ):
+            line = Text()
+            line.append("  上次对话  ", style="dim")
+            line.append(f"{format_age(snap.age_seconds)}", style="cyan")
+            line.append("  ·  ", style="dim")
+            line.append(f"{snap.turn_count} 轮", style="green")
+            line.append("  ·  ", style="dim")
+            line.append(f"~{snap.estimated_tokens} tokens", style="dim")
+            console.print()
+            console.print(line)
+            if typer.confirm("  恢复上次的对话？", default=True):
+                conductor.ctx.history = list(snap.history)
+                console.print("[dim]  已恢复历史。/reset 可清空。[/dim]")
+            else:
+                console.print("[dim]  好，从头开始。[/dim]")
+        else:
+            line = Text()
+            line.append("  ", style="")
+            line.append("发现快照", style="dim yellow")
+            line.append(
+                f"，但 profile/model 不匹配（旧={snap.profile_name}/{snap.model}），跳过恢复。",
+                style="dim",
+            )
+            console.print()
+            console.print(line)
+
     _greet(
         profile_name,
         profile.kind.value,
@@ -1950,11 +2444,27 @@ async def _chat_loop() -> None:
         cfg.assistant_alias,
         cfg.user_alias,
         registry.all(),
+        show_thinking=cfg.chat_ui.show_thinking,
     )
+
+    # chat loop 的可变状态（slash 命令会改写它）
+    state: dict[str, Any] = {
+        "show_thinking": cfg.chat_ui.show_thinking,
+        "turn_count": 0,
+        "totals": {
+            "input": 0,
+            "output": 0,
+            "cache_read": 0,
+            "cache_write": 0,
+        },
+        "profile_name": profile_name,
+    }
 
     while True:
         try:
-            user_input = console.input("[bold cyan]用户 ▸[/bold cyan] ").strip()
+            user_input = console.input(
+                f"[bold cyan]{_ICON_USER}[/bold cyan] "
+            ).strip()
         except (EOFError, KeyboardInterrupt):
             console.print("\n[dim]玄玑先去忙了。[/dim]")
             return
@@ -1962,56 +2472,120 @@ async def _chat_loop() -> None:
             console.print("[dim]玄玑先去忙了。[/dim]")
             return
 
-        accumulated = ""
+        slash = _handle_slash_command(user_input, conductor, state)
+        if slash is False:
+            console.print("[dim]玄玑先去忙了。[/dim]")
+            return
+        if slash is True:
+            continue
+
+        # 输出区状态机
+        accumulated = ""        # 当前 assistant 文本段累积
+        text_open = False       # 当前是否有打开的文本段
+        thinking_open = False   # 当前是否处于 thinking 段
         live: Live | None = None
 
-        def _open_live() -> Live:
-            return Live(
-                Panel(
-                    Text("……", style="dim"),
-                    title="[magenta]玄玑[/magenta]",
-                    border_style="magenta",
-                ),
-                console=console,
-                refresh_per_second=12,
-            )
+        def _close_live() -> None:
+            nonlocal live
+            if live is not None:
+                live.__exit__(None, None, None)
+                live = None
 
         try:
-            live = _open_live()
-            live.__enter__()
+            console.print()  # assistant 段开始前空一行
             async for delta in conductor.send(user_input):
-                if delta.type == "text_delta" and delta.text:
-                    accumulated += delta.text
-                    live.update(
-                        Panel(
-                            Markdown(accumulated),
-                            title="[magenta]玄玑[/magenta]",
-                            border_style="magenta",
-                        ),
+                if delta.type == "thinking_start":
+                    if not state["show_thinking"]:
+                        continue
+                    _close_live()
+                    if not thinking_open:
+                        _print_thinking_marker()
+                        thinking_open = True
+                elif delta.type == "thinking_delta" and delta.text:
+                    if not state["show_thinking"]:
+                        continue
+                    # 思维链以缩进 + 暗灰展示，按 chunk 直接打印
+                    console.print(
+                        Text(delta.text, style="dim italic"),
+                        end="",
+                        soft_wrap=True,
                     )
+                elif delta.type == "thinking_end":
+                    if not state["show_thinking"]:
+                        continue
+                    if thinking_open:
+                        console.print()  # 思维链结束换行
+                        thinking_open = False
+                elif delta.type == "text_delta" and delta.text:
+                    if not text_open:
+                        # 文本段刚开始：打 ● 标记，再开 Live 渲染 markdown
+                        _print_assistant_marker()
+                        text_open = True
+                        live = Live(
+                            Markdown(""),
+                            console=console,
+                            refresh_per_second=12,
+                            vertical_overflow="visible",
+                        )
+                        live.__enter__()
+                    accumulated += delta.text
+                    if live is not None:
+                        live.update(Markdown(accumulated))
                 elif delta.type in (
                     "tool_run_started",
                     "tool_run_blocked",
                     "tool_run_done",
                 ):
-                    # 工具事件先关 Live 再打印，避免渲染撕裂
-                    if live is not None:
-                        live.__exit__(None, None, None)
-                        live = None
+                    # 工具事件先关 Live + 复位文本段，避免渲染撕裂
+                    _close_live()
+                    if text_open:
+                        accumulated = ""
+                        text_open = False
                     _render_tool_event(delta)
-                    accumulated = ""  # 下一轮 text 从空开始
-                    live = _open_live()
-                    live.__enter__()
                 elif delta.type == "message_done" and delta.usage:
-                    console.print(
-                        f"[dim]in={delta.usage.input_tokens} "
-                        f"out={delta.usage.output_tokens}[/dim]"
+                    _close_live()
+                    if text_open:
+                        text_open = False
+                    u = delta.usage
+                    state["turn_count"] += 1
+                    totals = state["totals"]
+                    totals["input"] += u.input_tokens
+                    totals["output"] += u.output_tokens
+                    totals["cache_read"] += u.cache_read_tokens
+                    totals["cache_write"] += u.cache_write_tokens
+                    console.print()
+                    _print_status_bar(
+                        provider=conductor.ctx.provider.name,
+                        model=conductor.ctx.model,
+                        profile_name=profile_name,
+                        turn_usage=u,
+                        totals=totals,
+                        turn_count=state["turn_count"],
+                        history_len=len(conductor.ctx.history),
+                        max_context_tokens=conductor.compaction.max_context_tokens,
+                        show_thinking=state["show_thinking"],
+                        persona_mode=conductor.ctx.mode.value,
+                        persona_temp=conductor.ctx.temperature.value,
                     )
+                    console.print()
+                    # 落盘最新历史，下次启动可恢复（失败不打断对话）
+                    with contextlib.suppress(Exception):
+                        save_last_session(
+                            ChatSessionSnapshot(
+                                profile_name=profile_name,
+                                provider=conductor.ctx.provider.name,
+                                model=conductor.ctx.model,
+                                history=[
+                                    Message.model_validate(m.model_dump())
+                                    for m in conductor.ctx.history
+                                ],
+                            )
+                        )
         except Exception as e:
-            console.print(f"\n[red]调用失败：{type(e).__name__}: {e}[/red]")
+            _close_live()
+            console.print(f"\n[red]调用失败：{type(e).__name__}: {e}[/red]\n")
         finally:
-            if live is not None:
-                live.__exit__(None, None, None)
+            _close_live()
 
 
 @app.command()

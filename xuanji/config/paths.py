@@ -127,3 +127,18 @@ def vector_db_path() -> Path:
     p = data_dir() / "vectors"
     p.mkdir(parents=True, exist_ok=True)
     return p
+
+
+def chat_session_dir() -> Path:
+    """CLI chat 会话快照目录。
+
+    `last.json` 存放最近一次对话的 history，重启 CLI 时可询问是否恢复。
+    """
+    p = data_dir() / "chat_sessions"
+    p.mkdir(parents=True, exist_ok=True)
+    return p
+
+
+def chat_session_last_path() -> Path:
+    """最近一次 CLI chat 会话快照路径。"""
+    return chat_session_dir() / "last.json"
