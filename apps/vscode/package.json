@@ -1,0 +1,112 @@
+{
+  "name": "xuanji-vscode",
+  "displayName": "玄玑 · FiveM 智能体",
+  "description": "FiveM 资源开发助手：自动识别 framework / inventory / target，浏览预设草案，搜索知识库与记忆。",
+  "version": "0.5.0",
+  "publisher": "xuanji",
+  "private": true,
+  "engines": {
+    "vscode": "^1.85.0"
+  },
+  "categories": ["Other"],
+  "main": "./out/extension.js",
+  "activationEvents": [
+    "onStartupFinished"
+  ],
+  "contributes": {
+    "commands": [
+      {
+        "command": "xuanji.detectProject",
+        "title": "玄玑：检测当前项目",
+        "category": "玄玑"
+      },
+      {
+        "command": "xuanji.analyzeResource",
+        "title": "玄玑：分析这个 resource",
+        "category": "玄玑"
+      },
+      {
+        "command": "xuanji.scaffoldFromPreset",
+        "title": "玄玑：从预设新建 resource",
+        "category": "玄玑"
+      },
+      {
+        "command": "xuanji.searchKnowledge",
+        "title": "玄玑：在知识库搜索…",
+        "category": "玄玑"
+      },
+      {
+        "command": "xuanji.saveSelectionAsMemory",
+        "title": "玄玑：把选中保存为记忆",
+        "category": "玄玑"
+      },
+      {
+        "command": "xuanji.openDashboard",
+        "title": "玄玑：打开仪表盘",
+        "category": "玄玑"
+      },
+      {
+        "command": "xuanji.restartBackend",
+        "title": "玄玑：重启后端",
+        "category": "玄玑"
+      }
+    ],
+    "menus": {
+      "explorer/context": [
+        {
+          "command": "xuanji.detectProject",
+          "when": "explorerResourceIsFolder",
+          "group": "9_xuanji@1"
+        },
+        {
+          "command": "xuanji.analyzeResource",
+          "when": "explorerResourceIsFolder",
+          "group": "9_xuanji@2"
+        }
+      ],
+      "editor/context": [
+        {
+          "command": "xuanji.saveSelectionAsMemory",
+          "when": "editorHasSelection",
+          "group": "9_xuanji@1"
+        }
+      ]
+    },
+    "configuration": {
+      "title": "玄玑",
+      "properties": {
+        "xuanji.pythonPath": {
+          "type": "string",
+          "default": "",
+          "description": "玄玑后端用的 Python 解释器。优先级：(1) 此设置 → (2) workspace .venv → (3) PATH 上的 xuanji 命令 → (4) python/python3/py"
+        },
+        "xuanji.backendArgs": {
+          "type": "array",
+          "default": ["-m", "xuanji.cli", "ipc"],
+          "items": { "type": "string" },
+          "description": "启动后端的参数列表。默认通过 python -m xuanji.cli ipc 启动（要求该解释器装了 xuanji 包）"
+        },
+        "xuanji.workdir": {
+          "type": "string",
+          "default": "",
+          "description": "后端工作目录（留空 = workspace 根目录）。装好 xuanji 包后通常不必设；开发期可填仓库路径以便复用 uv venv。"
+        },
+        "xuanji.useUv": {
+          "type": "boolean",
+          "default": false,
+          "description": "用 uv run 启动后端（开发期推荐开；用户装包模式下保持关）"
+        }
+      }
+    }
+  },
+  "scripts": {
+    "build": "tsc -p .",
+    "watch": "tsc -p . -w",
+    "vscode:prepublish": "npm run build"
+  },
+  "devDependencies": {
+    "@types/node": "^20.11.0",
+    "@types/vscode": "^1.85.0",
+    "typescript": "^5.4.0"
+  }
+}

@@ -1,0 +1,303 @@
+// 后端进程托管：spawn / 重启 / 错误日志聚合。
+// 后端是 stdio JSON-RPC server（python -m core.cli ipc），
+// 我们把 stdout 喂给 JsonRpcClient，stderr 倒进 OutputChannel。
+
+import * as cp from "child_process";
+import * as fs from "fs";
+import * as path from "path";
+import * as vscode from "vscode";
+
+import { JsonRpcClient } from "./rpc";
+
+export interface BackendOptions {
+    pythonPath: string;
+    args: string[];
+    cwd: string;
+    useUv: boolean;
+}
+
+export class XuanjiBackend implements vscode.Disposable {
+    private process: cp.ChildProcess | null = null;
+    private rpcClient: JsonRpcClient | null = null;
+    private readonly logChannel: vscode.OutputChannel;
+    private starting: Promise<void> | null = null;
+    private exitListener: ((code: number | null) => void) | null = null;
+    private stderrTail: string[] = [];
+
+    constructor() {
+        this.logChannel = vscode.window.createOutputChannel("玄玑 Backend");
+    }
+
+    get rpc(): JsonRpcClient {
+        if (!this.rpcClient) {
+            throw new Error("玄玑后端未启动");
+        }
+        return this.rpcClient;
+    }
+
+    isAlive(): boolean {
+        return this.process !== null && this.rpcClient !== null;
+    }
+
+    async ensureStarted(options: BackendOptions): Promise<void> {
+        if (this.isAlive()) {
+            return;
+        }
+        if (this.starting) {
+            return this.starting;
+        }
+        this.starting = this.start(options).finally(() => {
+            this.starting = null;
+        });
+        return this.starting;
+    }
+
+    private async start(options: BackendOptions): Promise<void> {
+        let command: string;
+        let args: string[];
+        if (options.useUv) {
+            command = process.platform === "win32" ? "uv.exe" : "uv";
+            const uvArgs = options.pythonPath
+                ? ["run", "--python", options.pythonPath]
+                : ["run"];
+            args = [...uvArgs, ...options.args];
+        } else if (options.pythonPath) {
+            // 用户显式配了解释器，老老实实用它跑 backendArgs
+            command = options.pythonPath;
+            args = options.args;
+        } else {
+            // 优先用装好的 xuanji 可执行文件——这样 wheel 装哪儿都行，
+            // cwd 不必是仓库根
+            const xuanjiBin = findXuanjiBin(options.cwd);
+            if (xuanjiBin) {
+                command = xuanjiBin;
+                args = ["ipc"];
+            } else {
+                command = findVenvPython(options.cwd) || this.pickDefaultPython();
+                args = options.args;
+            }
+        }
+
+        this.stderrTail = [];
+        this.logChannel.appendLine(
+            `[spawn] cwd=${options.cwd} cmd=${command} args=${JSON.stringify(args)}`,
+        );
+
+        let child: cp.ChildProcess;
+        try {
+            child = cp.spawn(command, args, {
+                cwd: options.cwd,
+                env: { ...process.env, PYTHONIOENCODING: "utf-8" },
+                stdio: ["pipe", "pipe", "pipe"],
+                windowsHide: true,
+            });
+        } catch (e) {
+            const msg = e instanceof Error ? e.message : String(e);
+            this.logChannel.appendLine(`[spawn-error] ${msg}`);
+            throw new Error(`无法启动 ${command}：${msg}`);
+        }
+
+        this.process = child;
+        const rpcClient = new JsonRpcClient(child.stdin!);
+        this.rpcClient = rpcClient;
+
+        let exited = false;
+        let exitCode: number | null = null;
+
+        child.stdout!.on("data", (chunk: Buffer) => rpcClient.feed(chunk));
+        child.stderr!.on("data", (chunk: Buffer) => {
+            const text = chunk.toString("utf-8");
+            this.logChannel.append(text);
+            this.stderrTail.push(text);
+            if (this.stderrTail.length > 50) {
+                this.stderrTail.shift();
+            }
+        });
+        child.on("error", (err) => {
+            this.logChannel.appendLine(`[error] ${err.message}`);
+        });
+        child.on("exit", (code) => {
+            exited = true;
+            exitCode = code;
+            this.logChannel.appendLine(`[exit] 后端进程退出 code=${code}`);
+            this.rpcClient?.close();
+            this.rpcClient = null;
+            this.process = null;
+            this.exitListener?.(code);
+        });
+
+        // 用一次 info 调用确认握手成功
+        try {
+            await Promise.race([
+                rpcClient.call("info"),
+                this.wait(8000).then(() => {
+                    throw new Error("后端 8 秒内没响应 info 调用");
+                }),
+            ]);
+            this.logChannel.appendLine("[ok] 握手通过，后端就绪");
+        } catch (e) {
+            const reason = e instanceof Error ? e.message : String(e);
+            const tail = this.stderrTail.join("").trim().split("\n").slice(-8).join("\n");
+            const hint = exited
+                ? `后端进程退出 code=${exitCode}`
+                : "进程仍在跑但握手失败";
+            const detail = tail ? `\n— stderr 末尾 —\n${tail}` : "";
+            this.logChannel.appendLine(`[fail] ${hint}：${reason}${detail}`);
+            this.dispose();
+            throw new Error(`${hint}：${reason}${detail}`);
+        }
+    }
+
+    private pickDefaultPython(): string {
+        if (process.platform === "win32") {
+            return "py";
+        }
+        return "python3";
+    }
+
+    private wait(ms: number): Promise<void> {
+        return new Promise((r) => setTimeout(r, ms));
+    }
+
+    onExit(listener: (code: number | null) => void): void {
+        this.exitListener = listener;
+    }
+
+    showLog(): void {
+        this.logChannel.show();
+    }
+
+    async restart(options: BackendOptions): Promise<void> {
+        this.dispose();
+        await this.ensureStarted(options);
+    }
+
+    dispose(): void {
+        if (this.process) {
+            try {
+                this.process.kill();
+            } catch {
+                /* ignore */
+            }
+        }
+        this.process = null;
+        this.rpcClient?.close();
+        this.rpcClient = null;
+    }
+}
+
+/**
+ * 自动找 xuanji 项目根：从 candidate 往上走，
+ * 找到含 `pyproject.toml` 且 `name = "xuanji"` 就返回。
+ */
+function findXuanjiRoot(candidate: string): string | undefined {
+    let current = path.resolve(candidate);
+    for (let i = 0; i < 10; i++) {
+        const pj = path.join(current, "pyproject.toml");
+        if (fs.existsSync(pj)) {
+            try {
+                const text = fs.readFileSync(pj, "utf-8");
+                if (/name\s*=\s*"xuanji"/.test(text)) {
+                    return current;
+                }
+            } catch {
+                /* ignore */
+            }
+        }
+        const parent = path.dirname(current);
+        if (parent === current) {
+            return undefined;
+        }
+        current = parent;
+    }
+    return undefined;
+}
+
+/**
+ * 在 cwd 里找 .venv 里的 Python——uv / python -m venv 创建的 venv。
+ * Windows: .venv/Scripts/python.exe
+ * 其它：   .venv/bin/python
+ */
+function findVenvPython(cwd: string): string | undefined {
+    const candidates =
+        process.platform === "win32"
+            ? [
+                  path.join(cwd, ".venv", "Scripts", "python.exe"),
+                  path.join(cwd, "venv", "Scripts", "python.exe"),
+              ]
+            : [
+                  path.join(cwd, ".venv", "bin", "python"),
+                  path.join(cwd, "venv", "bin", "python"),
+              ];
+    for (const c of candidates) {
+        if (fs.existsSync(c)) {
+            return c;
+        }
+    }
+    return undefined;
+}
+
+/**
+ * 找已装好的 xuanji 可执行文件。优先级：
+ * 1. cwd 内的 .venv/Scripts/xuanji.exe (Windows) 或 .venv/bin/xuanji (Unix)
+ * 2. PATH 上的 xuanji（pipx / uv tool / 系统 python 全局装）
+ *
+ * 找到就返回完整路径或裸命令名（让 OS 通过 PATH 解析）。
+ */
+function findXuanjiBin(cwd: string): string | undefined {
+    const isWin = process.platform === "win32";
+    const venvCandidates = isWin
+        ? [
+              path.join(cwd, ".venv", "Scripts", "xuanji.exe"),
+              path.join(cwd, "venv", "Scripts", "xuanji.exe"),
+          ]
+        : [
+              path.join(cwd, ".venv", "bin", "xuanji"),
+              path.join(cwd, "venv", "bin", "xuanji"),
+          ];
+    for (const c of venvCandidates) {
+        if (fs.existsSync(c)) {
+            return c;
+        }
+    }
+
+    // PATH 兜底：扫一下 PATH 里有没有 xuanji
+    const pathEnv = process.env.PATH || process.env.Path || "";
+    const pathSep = isWin ? ";" : ":";
+    const exeName = isWin ? "xuanji.exe" : "xuanji";
+    for (const dir of pathEnv.split(pathSep)) {
+        if (!dir) {
+            continue;
+        }
+        const full = path.join(dir, exeName);
+        if (fs.existsSync(full)) {
+            return full;
+        }
+    }
+    return undefined;
+}
+
+export function resolveBackendOptions(): BackendOptions {
+    const cfg = vscode.workspace.getConfiguration("xuanji");
+    const pyFromCfg = cfg.get<string>("pythonPath", "");
+    const args = cfg.get<string[]>("backendArgs", ["-m", "xuanji.cli", "ipc"]);
+    const useUv = cfg.get<boolean>("useUv", false);
+    const cfgCwd = cfg.get<string>("workdir", "");
+
+    let cwd: string;
+    if (cfgCwd) {
+        cwd = cfgCwd;
+    } else {
+        const wsRoot =
+            vscode.workspace.workspaceFolders?.[0]?.uri.fsPath || process.cwd();
+        // 开发模式（useUv）需要 cwd 里能 import xuanji；装好包后则随 workspace 走
+        cwd = useUv ? findXuanjiRoot(wsRoot) || wsRoot : wsRoot;
+    }
+
+    return {
+        pythonPath: pyFromCfg,
+        args,
+        cwd: path.resolve(cwd),
+        useUv,
+    };
+}

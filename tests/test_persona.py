@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from core.persona import (
+from xuanji.persona import (
     XUANJI_CORE_PROMPT,
     XUANJI_GUARDRAILS,
     PersonaMode,

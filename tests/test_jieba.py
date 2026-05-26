@@ -8,10 +8,10 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from core.knowledge import Chunk, SqliteKnowledgeStore
-from core.knowledge.tokenize import is_jieba_available, preprocess_text
-from core.memory.models import Memory, MemoryKind, MemoryScope
-from core.memory.store.sqlite import SqliteMemoryStore
+from xuanji.knowledge import Chunk, SqliteKnowledgeStore
+from xuanji.knowledge.tokenize import is_jieba_available, preprocess_text
+from xuanji.memory.models import Memory, MemoryKind, MemoryScope
+from xuanji.memory.store.sqlite import SqliteMemoryStore
 
 
 def test_jieba_available_in_test_env() -> None:
@@ -81,8 +81,8 @@ def test_skill_chinese_search_now_works(tmp_path: Path) -> None:
     """0.2.0 失败的 'test_save_then_search_skill' 中文 query 现在应 work。"""
     import asyncio
 
-    from core.capability.tool import ToolCtx
-    from core.tools.skills import SaveSkillTool, SearchSkillTool
+    from xuanji.capability.tool import ToolCtx
+    from xuanji.tools.skills import SaveSkillTool, SearchSkillTool
 
     store = SqliteMemoryStore(tmp_path / "m.db")
     ctx = ToolCtx(project_root=tmp_path, session_id="s", trace_id="t")

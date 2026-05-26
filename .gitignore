@@ -19,6 +19,9 @@ node_modules/
 dist/
 build/
 
+# VS Code 插件 TS 编译产物
+apps/vscode/out/
+
 # Tauri
 src-tauri/target/
 
