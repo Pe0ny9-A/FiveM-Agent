@@ -1060,7 +1060,7 @@ wheels = [
 
 [[package]]
 name = "xuanji-fivem"
-version = "0.9.3"
+version = "1.0.1"
 source = { editable = "." }
 dependencies = [
     { name = "anthropic" },

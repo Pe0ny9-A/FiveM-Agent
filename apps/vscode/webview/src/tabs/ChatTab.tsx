@@ -328,8 +328,9 @@ function ActiveSession({
 function MessageBubble({ msg }: { msg: ChatMessage }): JSX.Element {
     if (msg.role === "user") {
         return (
-            <div className="flex justify-end">
-                <div className="max-w-[80%] bg-vsaccent/90 text-vsaccentfg px-3 py-2 rounded text-xs whitespace-pre-wrap break-words">
+            <div className="flex flex-col gap-1">
+                <div className="text-[10px] font-semibold text-vslink">用户</div>
+                <div className="bg-vsinput border border-vsborder text-vsinputfg px-3 py-2 rounded text-xs whitespace-pre-wrap break-words">
                     {msg.text}
                 </div>
             </div>
@@ -338,6 +339,7 @@ function MessageBubble({ msg }: { msg: ChatMessage }): JSX.Element {
     const a = msg as AssistantMessage & { id: string };
     return (
         <div className="flex flex-col gap-1.5">
+            <div className="text-[10px] font-semibold text-vsok">玄玑</div>
             {a.thinking && (
                 <details className="bg-vswidget border border-vsborder rounded px-2 py-1 text-[11px] text-vsmuted">
                     <summary className="cursor-pointer">思考过程</summary>

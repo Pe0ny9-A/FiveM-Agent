@@ -2,6 +2,33 @@
 
 所有重要的变更都记在这里。版本号遵守 [SemVer](https://semver.org/lang/zh-CN/)。
 
+## [1.0.1] — 2026-05-27
+
+**vibe coding 主动摸底 + 工作台对话 UI 修复**。1.0.0 装机后两个真实痛点的快速跟进。
+
+### Fixed · 工作台对话 UI（apps/vscode/）
+
+- 用户消息气泡之前用 `bg-vsaccent/90`（accent 蓝），在某些 VS Code 主题下底色透明度处理后跟背景区分不明显，看起来像"消息发出去就消失了"。
+- 改成左对齐 + 顶部带角色徽标——「**小宝**」蓝色 / 「**玄玑**」绿色，用户气泡用 `bg-vsinput`，符合主流聊天软件视觉。
+- 影响：[ChatTab.tsx#L328](apps/vscode/webview/src/tabs/ChatTab.tsx#L328) 的 MessageBubble 组件。
+
+### Added · vibe coding 主动摸底（xuanji/persona/）
+
+- 1.0.0 的 CHAT 模式 brief 只写了"闲聊 + 撒娇"，模型读完默认就只闲聊；
+  小宝丢一句「熟悉一下项目」，玄玑会有思考有回复但完全不动手翻文件。
+- [modes.py:41](xuanji/persona/modes.py#L41) CHAT brief 改写：动词信号（看 / 摸 /
+  搞 / 试 / 跑 / 熟悉 / 检查 / 整一下）+ 名词信号（项目名 / resource 名 / 文件名）
+  自动触发"动手"行为。"姐姐先扫一眼"等口头禅必须真的调工具。
+- [xuanji.py:31](xuanji/persona/xuanji.py#L31) 新增「模糊指令处理原则（vibe
+  coding 必读）」一整段：不反问澄清、入项目首动作有套路（list_dir 根 →
+  XUANJI.md → CLAUDE.md → README.md → fxmanifest.lua → 关键入口）、闭环原则。
+- 改的是原则不是关键词列表，避免下一次小宝换说法就漏掉。
+
+### Notes
+
+- 后端 1.0.1 / VS Code 插件 1.0.1 同步发布；
+- 三件套全绿：509 单测 / 106 模块 mypy strict / ruff 零告警。
+
 ## [1.0.0] — 2026-05-26
 
 **VS Code 插件正式版 · 现代化工作台 · 全家桶可视化配置 · 议会式群英会**。
