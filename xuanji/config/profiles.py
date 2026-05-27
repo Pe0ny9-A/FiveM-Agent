@@ -22,6 +22,18 @@ class ProfileKind(StrEnum):
     OPENAI_COMPATIBLE = "openai-compatible"
 
 
+class WireFormat(StrEnum):
+    """Provider 调用线协议。
+
+    决定 OpenAICompatibleProvider 走哪种 SDK 方言：
+    - openai：POST /v1/chat/completions（默认）
+    - anthropic：POST /v1/messages（NewAPI / OneAPI 转发的 Claude 端点）
+    """
+
+    OPENAI = "openai"
+    ANTHROPIC = "anthropic"
+
+
 class _ProfileBase(BaseModel):
     """所有 profile 共享字段。"""
 
@@ -44,7 +56,14 @@ class DeepSeekProfile(_ProfileBase):
 
 class OpenAICompatibleProfile(_ProfileBase):
     kind: Literal[ProfileKind.OPENAI_COMPATIBLE] = ProfileKind.OPENAI_COMPATIBLE
-    base_url: HttpUrl = Field(description="兼容 OpenAI Chat Completions 的端点 URL")
+    base_url: HttpUrl = Field(description="兼容端点 URL（OpenAI 或 Anthropic 协议）")
+    wire_format: WireFormat = Field(
+        default=WireFormat.OPENAI,
+        description=(
+            "线协议：openai 走 /v1/chat/completions，anthropic 走 /v1/messages。"
+            "NewAPI/OneAPI 转发 Claude 端点时选 anthropic。"
+        ),
+    )
 
 
 Profile = Annotated[

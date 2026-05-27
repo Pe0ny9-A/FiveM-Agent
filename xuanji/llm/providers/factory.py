@@ -5,8 +5,9 @@ base_url 统一从 core.config.profiles.OFFICIAL_BASE_URLS 读取，
 
 三家分立：
 - AnthropicProfile → AnthropicProvider（Extended Thinking / Prompt Cache）
-- OpenAIProfile / OpenAICompatibleProfile → OpenAIProvider（reasoning 模型 / prefix cache）
+- OpenAIProfile / OpenAICompatibleProfile(openai) → OpenAIProvider
 - DeepSeekProfile → DeepSeekProvider（reasoning_content 往返 / prompt cache hit/miss）
+- OpenAICompatibleProfile(anthropic) → AnthropicProvider 接 NewAPI/OneAPI 中转的 Claude
 """
 
 from __future__ import annotations
@@ -19,6 +20,7 @@ from xuanji.config.profiles import (
     OpenAIProfile,
     Profile,
     ProfileKind,
+    WireFormat,
 )
 from xuanji.llm.providers.anthropic import AnthropicProvider
 from xuanji.llm.providers.base import LLMProvider
@@ -48,6 +50,11 @@ def build_provider(profile: Profile) -> LLMProvider:
         )
 
     if isinstance(profile, OpenAICompatibleProfile):
+        if profile.wire_format is WireFormat.ANTHROPIC:
+            return AnthropicProvider(
+                api_key=profile.api_key,
+                base_url=str(profile.base_url),
+            )
         return OpenAIProvider(
             api_key=profile.api_key,
             base_url=str(profile.base_url),
@@ -55,3 +62,4 @@ def build_provider(profile: Profile) -> LLMProvider:
         )
 
     raise ValueError(f"未知 profile 类型：{type(profile).__name__}")
+

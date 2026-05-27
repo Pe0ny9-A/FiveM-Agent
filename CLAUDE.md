@@ -90,30 +90,43 @@ uv run xuanji config use <name>  # 切换 profile
 uv run xuanji chat             # 进入对话
 ```
 
-## 当前进度（截至 1.0.0）
+## 当前进度（截至 1.2.0）
 
 - [x] M0 骨架 + 三家 LLM Provider + 配置系统 + 玄玑人设
 - [x] 天枢台 Conductor 多轮 tool loop + reflux + audit
 - [x] 百工坊 + 工造司 InProcSandbox + 司辰阁 GateInterceptor + HITL
 - [x] 稷下学宫 SQLite FTS5 + jieba 中文分词 + 真 LanceDB 向量混合检索 + 5 套种子
 - [x] 怀玉阁 SQLite 三层 scope × 三类 kind + 衰减 Reflux
-- [x] 0.2 自演化：21 工具（meta/memory/ingest/skill/factory）
-- [x] 0.3 群英会：Supervisor + 3 角色（researcher/coder/reviewer）+ dispatch_subagent
-- [x] 0.3 爬虫：BFS + 增量 + crawl_site 工具（NET → HITL）
-- [x] 0.3 ToolFactory：propose → generate(LLM) → test(subprocess) → publish 四步
-- [x] 0.3 FastAPI 服务：WebSocket 流式聊天 + REST CRUD + WebSocketHITL 桥
-- [x] 0.3 Tauri 桌面：apps/desktop 配置 + 自启 Python 后端
-- [x] 0.4 FiveM 专精层：detector / analyzer / 6 套 builtin 预设 / 自学习预设
-- [x] 0.5 IPC 子系统：LSP 风格 stdio JSON-RPC + 22 RPC 方法 + `xuanji ipc` 入口
-- [x] 0.5 VS Code 插件第一版：状态栏 / 命令面板五件套 / 三栏仪表盘
+- [x] 0.2 自演化:21 工具(meta/memory/ingest/skill/factory)
+- [x] 0.3 群英会:Supervisor + 3 角色(researcher/coder/reviewer) + dispatch_subagent
+- [x] 0.3 爬虫:BFS + 增量 + crawl_site 工具(NET → HITL)
+- [x] 0.3 ToolFactory:propose → generate(LLM) → test(subprocess) → publish 四步
+- [x] 0.3 FastAPI 服务:WebSocket 流式聊天 + REST CRUD + WebSocketHITL 桥
+- [x] 0.3 Tauri 桌面:apps/desktop 配置 + 自启 Python 后端
+- [x] 0.4 FiveM 专精层:detector / analyzer / 6 套 builtin 预设 / 自学习预设
+- [x] 0.5 IPC 子系统:LSP 风格 stdio JSON-RPC + 22 RPC 方法 + `xuanji ipc` 入口
+- [x] 0.5 VS Code 插件第一版:状态栏 / 命令面板五件套 / 三栏仪表盘
 - [x] 0.8 真 LanceDB + Hooks --explain + 内置示范 skill/hook
-- [x] **1.0 现代化 React 工作台**：Vite + React 18 + Tailwind + Zustand，七栏（对话/群英会/Profiles/Skills/MCP/Hooks/仪表盘）
-- [x] **1.0 多会话流式聊天**：每会话独立 ServerRuntime/Conductor，工具事件可视化 + 文件链接跳转 + Profile 任意切换
-- [x] **1.0 议会式群英会面板**：UUID 关联 ensemble.* 进度，CouncilorRow 自定义角色/profile/brief，VerdictCard 渲染 summary/chosen_path/consensus/divergence/risks
-- [x] **1.0 全家桶可视化配置**：Profiles 切换 / Skills（reload/show/MD 渲染）/ MCP（CRUD + reload）/ Hooks（CRUD + reload + test）
-- [x] **1.0 状态栏增强**：profile · framework/inventory/target · ↑↓token · busy spinner，订阅 chat.* 事件
-- [x] CLI：`info` / `chat` / `serve` / `ipc` / `config` / `knowledge` / `memory` / `skill` / `tool` / `fivem` / `preset` / `hook`
-- [x] 质量门：ruff/mypy strict/pytest 三件套全绿，**509 单测 / 29 工具 / 106 模块**
+- [x] 1.0 现代化 React 工作台：Vite + React 18 + Tailwind + Zustand，七栏（对话/群英会/Profiles/Skills/MCP/Hooks/仪表盘）
+- [x] 1.0 多会话流式聊天：每会话独立 ServerRuntime/Conductor，工具事件可视化 + 文件链接跳转 + Profile 任意切换
+- [x] 1.0 议会式群英会面板：UUID 关联 ensemble.* 进度，CouncilorRow 自定义角色/profile/brief，VerdictCard 渲染 summary/chosen_path/consensus/divergence/risks
+- [x] 1.0 全家桶可视化配置：Profiles 切换 / Skills（reload/show/MD 渲染）/ MCP（CRUD + reload）/ Hooks（CRUD + reload + test）
+- [x] 1.0 状态栏增强：profile · framework/inventory/target · ↑↓token · busy spinner，订阅 chat.* 事件
+- [x] 1.1 工作台体验三件套：活动状态栏 + 会话窗口持久化 + Profiles 可用模型检测（list_models / test）+ Anthropic 线协议
+- [x] **1.2 ToolFactory 三轮自修复**：`autofix(slug, max_rounds=3)`，pytest 失败把日志喂回 LLM 自动改一版，DB schema 平滑迁移
+- [x] **1.2 FiveM 知识库扩源**：`fivem.qbox@main` / `fivem.esx@1.13` / `fivem.oxmysql@2.x` / `fivem.natives@latest` 四个新命名空间 + 27 Symbol + 8 Chunk
+- [x] **1.2 群英会深度协作**：`DispatchSubagentTool` 加 depth/max_depth/parent_role，sub-agent 可递归召唤同伴；稷下生 / 天枢令 allowed_tools 含 dispatch_subagent
+- [x] **1.2 规则启发式语义压缩**：`score_message()` 三维打分（工具调用 +0.35 / 文本长度 0..0.30 / 后续引用 +0.35）→ ★ 高分原文 / · 中分摘要 / 低分丢弃
+- [x] CLI：`info` / `chat` / `serve` / `ipc` / `config` / `knowledge` / `memory` / `skill` / `tool`(含 autofix) / `fivem` / `preset` / `hook`
+- [x] 质量门：ruff/mypy strict/pytest 三件套全绿，**529 单测 / 29 工具 / 107 模块**
+
+### 1.2.0 关键设计
+
+**ToolFactory autofix = LLM 拿自己的烂代码改自己的烂代码**：repair 模式给 LLM 看原 brief + broken code + pytest 输出，要求"按原方案改不另起炉灶"。失败 3 轮后停手不死磕，给小宝留判断窗口。所有 LLM 自演化路径仍守"propose 进 LLM、generate/test/publish 留 CLI"边界——autofix 也是 CLI 命令，LLM 不能触发。
+
+**sub-agent 递归 = 把 dispatch_subagent 当工具自然下传**：每层 DispatchSubagentTool 在召唤时构造一个 depth+1 的新实例放进 sub-agent 的 master_registry，沿 `Tool` 接口下传。深度限制由实例自己持有的 `_depth >= _max_depth` 在 execute 入口拒绝，不靠 ctx 传参，零侵入主 Conductor。
+
+**规则打分 = 用结构信号代替 LLM 摘要**：工具调用是事件性证据（不能丢）、长 prompt 多含约束、被后续轮引用的关键词意味着仍在话题里——三维加权挑出"骨架消息"，余下用短摘要或丢弃。M5+ 想升级 Haiku 摘要时直接换 `_summarize_pair`。
 
 ### 1.0.0 关键设计
 

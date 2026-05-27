@@ -7,8 +7,8 @@ FiveM 资源插件开发 + 服务器运维治理双线助手。深度熟悉 QBCo
 
 [![PyPI](https://img.shields.io/pypi/v/xuanji-fivem?color=blue)](https://pypi.org/project/xuanji-fivem/)
 [![python](https://img.shields.io/badge/python-3.12+-blue)](https://www.python.org/)
-[![status](https://img.shields.io/badge/status-0.9.3%20alpha-orange)]()
-[![tests](https://img.shields.io/badge/tests-466%20passed-brightgreen)]()
+[![status](https://img.shields.io/badge/status-1.2.0%20alpha-orange)]()
+[![tests](https://img.shields.io/badge/tests-529%20passed-brightgreen)]()
 [![tools](https://img.shields.io/badge/tools-41%20registered-blueviolet)]()
 
 ## 安装
@@ -32,19 +32,18 @@ pip install 'xuanji-fivem[vector]'
 
 首次跑 `xuanji init` 走交互式向导：填 API Key、导入 FiveM 种子知识、做一次连通性测试。`xuanji doctor` 全绿后就能日常用。
 
-## 当前进度（0.9.3）
+## 当前进度（1.2.0）
 
 - [x] **M0~M3 全部里程碑闭环**（见 [CHANGELOG.md](CHANGELOG.md)）
-- [x] **0.4 FiveM 专精层** — 项目识别 / 6 套预设 / 静态分析 / 自学习预设
-- [x] **0.5 IPC + VS Code 插件** — LSP 风格 stdio JSON-RPC，22 RPC method，零模型依赖插件
-- [x] **0.6 异构路由 + MCP 客户端** — ModelRouter 跨厂商挑选 + 收编外部 MCP server 工具
-- [x] **0.7 互通四件套** — Subprocess Sandbox / MCP Server / Skills / Hooks，与 Claude Code/Codex 双向迁移
-- [x] **0.8 真 LanceDB + Hooks `--explain` + 内置示范 skill/hook + 公开 PyPI 首发**
-- [x] **0.9.0 ToolFactory 闭环 + published 自动加载**
-- [x] **0.9.1 三家 Provider 各自适配 + 上下文自动压缩**
-- [x] **0.9.2 项目级 XUANJI.md + CLI 状态栏 + 思维链开关 + 会话恢复**
-- [x] **0.9.3 全家桶自配置（10 工具）+ 默认 DeepSeek V4 Pro + 代码强化段 + 4 个真实会话 bug 修复**
-- [x] **41 个工具** · **CLI 13 个子命令族** · **466 个单测** · **三件套全绿**
+- [x] **0.4 ~ 0.8** — FiveM 专精层 / IPC + VS Code 插件 / 异构路由 + MCP / 互通四件套 / 真 LanceDB + Hooks `--explain` + PyPI 首发
+- [x] **0.9.x** — ToolFactory 闭环 / Provider 各自适配 + 上下文自动压缩 / 项目级 XUANJI.md / 全家桶自配置 + DeepSeek V4 Pro
+- [x] **1.0 现代化 React 工作台** — Vite + React 18 + Tailwind + Zustand 七栏（对话 / 群英会 / Profiles / Skills / MCP / Hooks / 仪表盘），多会话流式 + 议会进度可视化
+- [x] **1.1 工作台体验三件套** — vibe coding 主动摸底 + 多会话 UI 修复 + Profiles 即时反馈
+- [x] **1.2 ToolFactory 三轮自修复回路** — `autofix(slug, max_rounds=3)` 自动读 stderr → 重生成 → 复跑测试，最多三轮
+- [x] **1.2 FiveM 知识库 SkillGraph 扩源** — QBox / ESX / oxmysql / natives 四个新命名空间，Symbol 卡含签名 + 参数 + 示例 + 版本范围
+- [x] **1.2 群英会深度协作** — `dispatch_subagent` 支持递归 `depth/max_depth/parent_role`，稷下生 / 天枢令可派遣 sub-agent，max_depth=2 守护
+- [x] **1.2 规则启发式语义压缩** — `score_message` 三维打分（tool 触发 / 长度 / 后续被引用），低分剪掉、高分保留全文摘要
+- [x] **41 个工具** · **CLI 13 个子命令族** · **529 个单测 / 107 模块** · **三件套全绿**
 
 ## 典型使用流程
 
@@ -267,7 +266,7 @@ xuanji project edit
 ```bash
 uv run ruff check xuanji/ tests/    # 0 告警
 uv run mypy xuanji/                 # strict 模式 0 告警
-uv run pytest                       # 466 测试全过
+uv run pytest                       # 529 测试全过
 ```
 
 ## 全家桶自配置（0.9.3）
@@ -319,7 +318,7 @@ Opus 4.7 / GPT-5.4 同等纪律的代码：写之前先读 / 最小改动 / 不�
 
 ## 路线图
 
-- **1.0** — M4 完结：议会式群英会（Council + Judge）+ API 稳定性审计 + 真实 LLM 长连接评测
+- **1.3+** — 议会式群英会（Council + Judge）+ API 稳定性审计 + 真实 LLM 长连接评测 + WebSocket 工作台升级
 
 ## 链接
 

@@ -1,8 +1,11 @@
 // 多会话聊天状态。
 // Session 列表 + 每会话的消息流，订阅后端 chat.* notification。
+// 持久化：webview 状态写入 vscode.setState/getState，关闭后再开能还原会话历史。
+// 后端 session_id 重启即失效；恢复出来的会话标记 archived=true，
+// 用户首次发送时自动 chat.start 拿新 session_id 替换。
 
 import { create } from "zustand";
-import { onNotification, rpcCall } from "./bridge";
+import { onNotification, rpcCall, loadState, persistState } from "./bridge";
 
 export type MessageRole = "user" | "assistant" | "system";
 
@@ -33,6 +36,20 @@ export interface UserMessage {
 
 export type ChatMessage = (UserMessage | AssistantMessage) & { id: string };
 
+interface PersistedSession {
+    title: string;
+    profile_name: string | null;
+    model: string;
+    provider: string;
+    mode: string;
+    messages: ChatMessage[];
+}
+interface PersistedState {
+    sessions: Record<string, PersistedSession>;
+    order: string[];
+    activeId: string | null;
+}
+
 export interface HitlPending {
     request_id: string;
     tool: string;
@@ -53,12 +70,14 @@ export interface SessionState {
     pendingHitl: HitlPending | null;
     sending: boolean;
     error: string | null;
+    archived: boolean; // true = 从 setState 恢复，后端 session 已失效，下次发送前要重连
 }
 
 interface ChatStore {
     sessions: Record<string, SessionState>;
     order: string[];
     activeId: string | null;
+    hydrated: boolean;
     setActive: (id: string | null) => void;
     createSession: (profileName?: string) => Promise<string>;
     closeSession: (id: string) => Promise<void>;
@@ -67,6 +86,7 @@ interface ChatStore {
     answerHitl: (id: string, approve: boolean) => Promise<void>;
     renameSession: (id: string, title: string) => void;
     switchProfile: (id: string, profileName: string) => Promise<void>;
+    hydrate: () => void;
 }
 
 function emptyAssistant(id: string): AssistantMessage & { id: string } {
@@ -103,6 +123,7 @@ export const useChatStore = create<ChatStore>((set, get) => {
         sessions: {},
         order: [],
         activeId: null,
+        hydrated: false,
         setActive: (id) => set({ activeId: id }),
 
         createSession: async (profileName?: string): Promise<string> => {
@@ -126,6 +147,7 @@ export const useChatStore = create<ChatStore>((set, get) => {
                 pendingHitl: null,
                 sending: false,
                 error: null,
+                archived: false,
             };
             set((s) => ({
                 sessions: { ...s.sessions, [result.session_id]: sess },
@@ -154,25 +176,71 @@ export const useChatStore = create<ChatStore>((set, get) => {
         },
 
         sendMessage: async (id: string, text: string): Promise<void> => {
-            const sess = get().sessions[id];
+            let sess = get().sessions[id];
             if (!sess || sess.sending) return;
+
+            // 持久化恢复出来的会话：后端 session_id 已失效，要先重新 chat.start
+            // 拿一个新的 id 接上，再把消息历史搬过去。
+            let activeId = id;
+            if (sess.archived) {
+                try {
+                    const result = await rpcCall<{
+                        session_id: string;
+                        profile_name: string | null;
+                        model: string;
+                        provider: string;
+                        mode: string;
+                    }>("chat.start", sess.profile_name ? { profile: sess.profile_name } : {});
+                    activeId = result.session_id;
+                    set((s) => {
+                        const old = s.sessions[id];
+                        if (!old) return s;
+                        const next: SessionState = {
+                            ...old,
+                            session_id: result.session_id,
+                            profile_name: result.profile_name,
+                            model: result.model,
+                            provider: result.provider,
+                            mode: result.mode,
+                            archived: false,
+                            error: null,
+                        };
+                        const sessions = { ...s.sessions };
+                        delete sessions[id];
+                        sessions[result.session_id] = next;
+                        const order = s.order.map((x) =>
+                            x === id ? result.session_id : x,
+                        );
+                        const curActive =
+                            s.activeId === id ? result.session_id : s.activeId;
+                        return { sessions, order, activeId: curActive };
+                    });
+                    sess = get().sessions[activeId];
+                    if (!sess) return;
+                } catch (e) {
+                    const msg = e instanceof Error ? e.message : String(e);
+                    patchSession(id, { error: msg });
+                    return;
+                }
+            }
+
             const userMsg: ChatMessage = {
                 id: cryptoRandomId(),
                 role: "user",
                 text,
             };
             const assistantId = cryptoRandomId();
-            patchSession(id, {
+            patchSession(activeId, {
                 messages: [...sess.messages, userMsg, emptyAssistant(assistantId)],
                 pendingAssistant: assistantId,
                 sending: true,
                 error: null,
             });
             try {
-                await rpcCall("chat.send", { session_id: id, text });
+                await rpcCall("chat.send", { session_id: activeId, text });
             } catch (e) {
                 const msg = e instanceof Error ? e.message : String(e);
-                patchSession(id, {
+                patchSession(activeId, {
                     sending: false,
                     pendingAssistant: null,
                     error: msg,
@@ -206,6 +274,57 @@ export const useChatStore = create<ChatStore>((set, get) => {
         },
 
         renameSession: (id, title) => patchSession(id, { title }),
+
+        hydrate: (): void => {
+            if (get().hydrated) return;
+            const saved = loadState<PersistedState>();
+            if (!saved || typeof saved !== "object") {
+                set({ hydrated: true });
+                return;
+            }
+            try {
+                const sessions: Record<string, SessionState> = {};
+                const order: string[] = [];
+                for (const id of saved.order || []) {
+                    const raw = saved.sessions?.[id];
+                    if (!raw) continue;
+                    sessions[id] = {
+                        session_id: id,
+                        title: raw.title || "会话",
+                        profile_name: raw.profile_name ?? null,
+                        model: raw.model || "",
+                        provider: raw.provider || "",
+                        mode: raw.mode || "chat",
+                        messages: (raw.messages || []).map((m: ChatMessage) =>
+                            m.role === "assistant"
+                                ? {
+                                      ...m,
+                                      streaming: false,
+                                      tools: m.tools || [],
+                                  }
+                                : m,
+                        ),
+                        pendingAssistant: null,
+                        pendingHitl: null,
+                        sending: false,
+                        error: null,
+                        archived: true,
+                    };
+                    order.push(id);
+                }
+                set({
+                    sessions,
+                    order,
+                    activeId:
+                        saved.activeId && sessions[saved.activeId]
+                            ? saved.activeId
+                            : order[order.length - 1] ?? null,
+                    hydrated: true,
+                });
+            } catch {
+                set({ hydrated: true });
+            }
+        },
 
         switchProfile: async (id: string, profileName: string): Promise<void> => {
             const sess = get().sessions[id];
@@ -243,6 +362,7 @@ export const useChatStore = create<ChatStore>((set, get) => {
                         pendingHitl: null,
                         sending: false,
                         error: null,
+                        archived: false,
                     };
                     const sessions = { ...s.sessions };
                     delete sessions[id];
@@ -365,9 +485,19 @@ onNotification((method, params) => {
                 | undefined;
             patchAssistant(sess.pendingAssistant, (m) => ({
                 ...m,
-                streaming: false,
                 stop_reason: String(params.stop_reason || ""),
                 usage: usage ?? null,
+            }));
+            // 注意：conductor 是多轮 tool loop，message_done 只代表本轮 LLM 段
+            // 结束（stop=tool_use 时后端还要继续跑工具+下一轮）。真正的 turn
+            // 结束信号是 chat.turn_done。这里不能 reset pendingAssistant，否则
+            // 后续 tool/delta 事件会被 patchAssistant 的早退判断丢弃。
+            break;
+        }
+        case "chat.turn_done": {
+            patchAssistant(sess.pendingAssistant, (m) => ({
+                ...m,
+                streaming: false,
             }));
             apply({ sending: false, pendingAssistant: null });
             break;
@@ -382,7 +512,8 @@ onNotification((method, params) => {
             apply({ sending: false, pendingAssistant: null, error: msg });
             break;
         }
-        case "chat.cancelled": {
+        case "chat.cancelled":
+        case "chat.turn_cancelled": {
             patchAssistant(sess.pendingAssistant, (m) => ({
                 ...m,
                 streaming: false,
@@ -406,4 +537,44 @@ onNotification((method, params) => {
         default:
             break;
     }
+});
+
+// ============================================================
+// 持久化：订阅 store 把会话写到 vscode webview state
+// ============================================================
+//
+// vscode.setState 在 webview 销毁时保留，重开 webview 通过 getState 还原。
+// 我们只持久化"长期信息"（标题/profile/消息历史），剩下的运行时字段
+// （sending / pendingAssistant / pendingHitl / error）都重置。
+// 后端 session_id 不持久化语义，我们存当前的 id 仅作为 React key 用，
+// 第一次发送时 sendMessage 会因为 archived=true 触发 chat.start 重连。
+
+let persistTimer: ReturnType<typeof setTimeout> | null = null;
+useChatStore.subscribe((state) => {
+    if (!state.hydrated) return;
+    if (persistTimer) clearTimeout(persistTimer);
+    persistTimer = setTimeout(() => {
+        const snapshot: PersistedState = {
+            sessions: {},
+            order: state.order,
+            activeId: state.activeId,
+        };
+        for (const id of state.order) {
+            const s = state.sessions[id];
+            if (!s) continue;
+            snapshot.sessions[id] = {
+                title: s.title,
+                profile_name: s.profile_name,
+                model: s.model,
+                provider: s.provider,
+                mode: s.mode,
+                messages: s.messages.map((m) =>
+                    m.role === "assistant"
+                        ? { ...m, streaming: false, pendingHitl: null }
+                        : m,
+                ),
+            };
+        }
+        persistState(snapshot);
+    }, 200);
 });

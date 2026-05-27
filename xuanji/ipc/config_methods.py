@@ -20,7 +20,9 @@ from xuanji.config import (
     OpenAIProfile,
     ProfileKind,
 )
-from xuanji.config.profiles import OFFICIAL_BASE_URLS, Profile
+from xuanji.config.probe import list_models as probe_list_models
+from xuanji.config.probe import ping as probe_ping
+from xuanji.config.profiles import OFFICIAL_BASE_URLS, Profile, WireFormat
 from xuanji.config.store import ChatUIConfig
 from xuanji.hooks import HookEvent, HooksFile, HookSpec
 from xuanji.ipc.errors import INVALID_PARAMS, RpcError
@@ -36,11 +38,21 @@ def _profile_summary(profile: Profile) -> dict[str, Any]:
         if isinstance(profile, OpenAICompatibleProfile)
         else OFFICIAL_BASE_URLS.get(profile.kind, "")
     )
+    wire_format = (
+        profile.wire_format.value
+        if isinstance(profile, OpenAICompatibleProfile)
+        else (
+            "anthropic"
+            if isinstance(profile, AnthropicProfile)
+            else "openai"
+        )
+    )
     return {
         "label": profile.label,
         "kind": profile.kind.value,
         "default_model": profile.default_model,
         "base_url": base_url,
+        "wire_format": wire_format,
     }
 
 
@@ -159,11 +171,19 @@ def build_config_methods(
             base_url = params.get("base_url")
             if not base_url:
                 raise RpcError(INVALID_PARAMS, "openai-compatible 需要 base_url")
+            wire_raw = params.get("wire_format", WireFormat.OPENAI.value)
+            try:
+                wire = WireFormat(wire_raw)
+            except ValueError as e:
+                raise RpcError(
+                    INVALID_PARAMS, f"未知 wire_format：{wire_raw}",
+                ) from e
             profile = OpenAICompatibleProfile(
                 label=label,
                 api_key=api_key,
                 default_model=default_model,
                 base_url=base_url,
+                wire_format=wire,
             )
         elif kind is ProfileKind.ANTHROPIC:
             profile = AnthropicProfile(
@@ -192,6 +212,106 @@ def build_config_methods(
         name = _require(params, "name")
         ok = _store().remove_profile(name)
         return {"ok": ok}
+
+    async def profiles_list_models(params: dict[str, Any]) -> dict[str, Any]:
+        """拉取候选模型。
+
+        三种调用方式：
+        1) 传 name —— 用已保存 profile（包括其 api_key）
+        2) 传 name + api_key + 其他字段 —— 编辑中实时探测，不写库
+        3) 完全用临时参数 —— 新增 profile 时还没保存就能预览
+        """
+        profile = _build_probe_profile(params)
+        try:
+            models = await probe_list_models(profile)
+        except RuntimeError as e:
+            raise RpcError(INVALID_PARAMS, str(e)) from e
+        return {
+            "items": [
+                {"id": m.id, "owned_by": m.owned_by, "created": m.created}
+                for m in models
+            ],
+        }
+
+    async def profiles_test(params: dict[str, Any]) -> dict[str, Any]:
+        """轻量握手：发 1 token 验证 api_key + wire_format 联通。"""
+        profile = _build_probe_profile(params)
+        model_override = params.get("model")
+        result = await probe_ping(profile, model=model_override)
+        return {
+            "ok": result.ok,
+            "latency_ms": result.latency_ms,
+            "status": result.status,
+            "error": result.error,
+        }
+
+    def _build_probe_profile(params: dict[str, Any]) -> Profile:
+        """从 params 拼一个临时 Profile 给探测用。
+
+        优先级：完整 params > 已保存 profile（按 name 拉出）。
+        params 里 api_key 缺失时回退到已保存的 profile.api_key。
+        """
+        name = params.get("name")
+        saved: Profile | None = None
+        if isinstance(name, str) and name:
+            cfg = _store().load()
+            saved = cfg.profiles.get(name)
+
+        kind_raw = params.get("kind") or (saved.kind.value if saved else None)
+        if not kind_raw:
+            raise RpcError(INVALID_PARAMS, "缺少 kind 或 name")
+        try:
+            kind = ProfileKind(kind_raw)
+        except ValueError as e:
+            raise RpcError(INVALID_PARAMS, f"未知 kind：{kind_raw}") from e
+
+        api_key = params.get("api_key") or (saved.api_key if saved else None)
+        if not api_key:
+            raise RpcError(INVALID_PARAMS, "缺少 api_key")
+        default_model = (
+            params.get("default_model")
+            or (saved.default_model if saved else None)
+            or _default_model_for_kind(kind)
+        )
+        label = params.get("label") or (saved.label if saved else "probe")
+
+        if kind is ProfileKind.OPENAI_COMPATIBLE:
+            base_url = params.get("base_url") or (
+                str(saved.base_url)
+                if isinstance(saved, OpenAICompatibleProfile)
+                else None
+            )
+            if not base_url:
+                raise RpcError(INVALID_PARAMS, "openai-compatible 需要 base_url")
+            wire_raw = params.get("wire_format") or (
+                saved.wire_format.value
+                if isinstance(saved, OpenAICompatibleProfile)
+                else WireFormat.OPENAI.value
+            )
+            try:
+                wire = WireFormat(wire_raw)
+            except ValueError as e:
+                raise RpcError(
+                    INVALID_PARAMS, f"未知 wire_format：{wire_raw}",
+                ) from e
+            return OpenAICompatibleProfile(
+                label=label,
+                api_key=api_key,
+                default_model=default_model,
+                base_url=base_url,
+                wire_format=wire,
+            )
+        if kind is ProfileKind.ANTHROPIC:
+            return AnthropicProfile(
+                label=label, api_key=api_key, default_model=default_model,
+            )
+        if kind is ProfileKind.OPENAI:
+            return OpenAIProfile(
+                label=label, api_key=api_key, default_model=default_model,
+            )
+        return DeepSeekProfile(
+            label=label, api_key=api_key, default_model=default_model,
+        )
 
     # ---------------- mcp.* ----------------
 
@@ -356,6 +476,8 @@ def build_config_methods(
         "profiles.upsert": profiles_upsert,
         "profiles.use": profiles_use,
         "profiles.remove": profiles_remove,
+        "profiles.list_models": profiles_list_models,
+        "profiles.test": profiles_test,
         "mcp.list": mcp_list,
         "mcp.upsert": mcp_upsert,
         "mcp.remove": mcp_remove,

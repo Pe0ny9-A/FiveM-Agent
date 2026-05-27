@@ -2,6 +2,8 @@
 // 协议：
 //   webview→host : { type:"rpc.call", id, method, params }
 //   host→webview : { type:"rpc.result", id, result } 或 { type:"rpc.error", id, error }
+//   webview→host : { type:"host.call", id, method, params }   (走 host 本地方法，如选文件)
+//   host→webview : { type:"host.result", id, result } 或 { type:"host.error", id, error }
 //   host→webview : { type:"notification", method, params }   (后端 push)
 //   host→webview : { type:"workspace", payload }             (workspace 元信息推送)
 
@@ -31,7 +33,9 @@ interface PendingCall {
 }
 
 const pending = new Map<number, PendingCall>();
+const hostPending = new Map<number, PendingCall>();
 let nextId = 1;
+let nextHostId = 1;
 
 type NotificationHandler = (method: string, params: Record<string, unknown>) => void;
 type WorkspaceHandler = (payload: Record<string, unknown>) => void;
@@ -54,6 +58,18 @@ window.addEventListener("message", (e: MessageEvent) => {
         const p = pending.get(msg.id);
         if (p) {
             pending.delete(msg.id);
+            p.reject(new RpcCallError(msg.error));
+        }
+    } else if (msg.type === "host.result") {
+        const p = hostPending.get(msg.id);
+        if (p) {
+            hostPending.delete(msg.id);
+            p.resolve(msg.result);
+        }
+    } else if (msg.type === "host.error") {
+        const p = hostPending.get(msg.id);
+        if (p) {
+            hostPending.delete(msg.id);
             p.reject(new RpcCallError(msg.error));
         }
     } else if (msg.type === "notification") {
@@ -106,6 +122,20 @@ export function onWorkspace(fn: WorkspaceHandler): () => void {
 
 export function postCommand(command: string, args: Record<string, unknown> = {}): void {
     getVscode().postMessage({ type: "command", command, args });
+}
+
+export function hostCall<T = unknown>(
+    method: string,
+    params: Record<string, unknown> = {},
+): Promise<T> {
+    const id = nextHostId++;
+    return new Promise<T>((resolve, reject) => {
+        hostPending.set(id, {
+            resolve: resolve as (v: unknown) => void,
+            reject,
+        });
+        getVscode().postMessage({ type: "host.call", id, method, params });
+    });
 }
 
 export function persistState<T extends object>(state: T): void {

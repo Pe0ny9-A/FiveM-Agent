@@ -10,6 +10,7 @@ import * as vscode from "vscode";
 import { resolveBackendOptions, XuanjiBackend } from "./backend";
 import { registerCommands } from "./commands";
 import { XuanjiDashboard } from "./dashboard";
+import { registerIntellisense } from "./intellisense";
 import { XuanjiStatusBar } from "./statusBar";
 import { XuanjiWorkbench } from "./workbench";
 
@@ -37,6 +38,7 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
         await backend.ensureStarted(resolveBackendOptions());
         await statusBar.refresh(backend);
         workbench.bindBackend(backend);
+        registerIntellisense(context, backend);
     } catch (e) {
         const msg = e instanceof Error ? e.message : String(e);
         statusBar.setError(msg);

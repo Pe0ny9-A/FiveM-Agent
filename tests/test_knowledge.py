@@ -117,6 +117,99 @@ def test_clear_namespace(store: SqliteKnowledgeStore) -> None:
     assert store.lookup_symbol("F") == []
 
 
+def test_search_symbols_by_prefix_basic(store: SqliteKnowledgeStore) -> None:
+    """前缀搜索：用于 IDE 内联补全。"""
+    store.upsert_symbols(
+        [
+            Symbol(
+                id="qb::QBCore.Functions.GetPlayer",
+                namespace="fivem.qbcore@1.x",
+                name="QBCore.Functions.GetPlayer",
+                kind="function",
+                side="server",
+            ),
+            Symbol(
+                id="qb::QBCore.Functions.GetPlayers",
+                namespace="fivem.qbcore@1.x",
+                name="QBCore.Functions.GetPlayers",
+                kind="function",
+                side="server",
+            ),
+            Symbol(
+                id="qb::QBCore.Functions.CreateUseableItem",
+                namespace="fivem.qbcore@1.x",
+                name="QBCore.Functions.CreateUseableItem",
+                kind="function",
+                side="server",
+            ),
+            Symbol(
+                id="ox::lib.callback.register",
+                namespace="fivem.ox_lib@3.x",
+                name="lib.callback.register",
+                kind="function",
+                side="any",
+            ),
+        ],
+    )
+    # 前缀命中 QBCore.Functions.Get*
+    hits = store.search_symbols_by_prefix("QBCore.Functions.Get")
+    names = sorted(h.name for h in hits)
+    assert names == ["QBCore.Functions.GetPlayer", "QBCore.Functions.GetPlayers"]
+
+    # 大小写不敏感
+    hits = store.search_symbols_by_prefix("qbcore.functions.create")
+    assert len(hits) == 1
+    assert hits[0].name == "QBCore.Functions.CreateUseableItem"
+
+    # namespace 过滤
+    hits = store.search_symbols_by_prefix(
+        "lib.", namespaces=["fivem.ox_lib@3.x"],
+    )
+    assert len(hits) == 1
+    assert hits[0].name == "lib.callback.register"
+
+    hits = store.search_symbols_by_prefix(
+        "lib.", namespaces=["fivem.qbcore@1.x"],
+    )
+    assert hits == []
+
+    # 空 prefix 不打全表
+    assert store.search_symbols_by_prefix("") == []
+
+
+def test_search_symbols_by_prefix_kind_and_limit(
+    store: SqliteKnowledgeStore,
+) -> None:
+    store.upsert_symbols(
+        [
+            Symbol(
+                id="ns::Foo",
+                namespace="ns",
+                name="Foo",
+                kind="function",
+            ),
+            Symbol(
+                id="ns::FooEvent",
+                namespace="ns",
+                name="FooEvent",
+                kind="event",
+            ),
+            Symbol(
+                id="ns::FooExport",
+                namespace="ns",
+                name="FooExport",
+                kind="export",
+            ),
+        ],
+    )
+    # kind 过滤
+    only_events = store.search_symbols_by_prefix("Foo", kinds=["event"])
+    assert [s.name for s in only_events] == ["FooEvent"]
+    # limit
+    capped = store.search_symbols_by_prefix("Foo", limit=2)
+    assert len(capped) == 2
+
+
 # ---------------- FTS5 安全性 ----------------
 
 
@@ -182,6 +275,35 @@ def test_seeds_include_npc_ai(store: SqliteKnowledgeStore) -> None:
     # 命名空间被收录
     namespaces = store.list_namespaces()
     assert "fivem.npc_ai@1.x" in namespaces
+
+
+def test_seeds_include_qbox_esx_oxmysql_natives(store: SqliteKnowledgeStore) -> None:
+    """1.2.0-C：扩源后 QBox/ESX/oxmysql/natives 四个命名空间齐了。"""
+    for s in seed_sources():
+        store.upsert_source(s)
+    store.upsert_symbols(seed_symbols())
+    store.upsert_chunks(seed_chunks())
+
+    # 新增四个命名空间各自有 symbol
+    namespaces = store.list_namespaces()
+    for ns in ("fivem.qbox@main", "fivem.esx@1.13", "fivem.oxmysql@2.x", "fivem.natives@latest"):
+        assert ns in namespaces, f"种子缺命名空间 {ns}"
+
+    # QBox：核心 export 能查到
+    assert store.lookup_symbol("exports.qbx_core:GetPlayer")
+    # ESX：xPlayer 取法 + 注册可使用物品
+    assert store.lookup_symbol("ESX.GetPlayerFromId")
+    assert store.lookup_symbol("ESX.RegisterUsableItem")
+    # oxmysql：query / transaction
+    assert store.lookup_symbol("MySQL.query")
+    assert store.lookup_symbol("MySQL.transaction")
+    # natives：高频几个
+    for n in ("PlayerPedId", "GetEntityCoords", "RegisterNetEvent", "TriggerServerEvent"):
+        assert store.lookup_symbol(n), f"种子缺 native {n}"
+
+    # 概念性 chunk：搜"框架选" / "占位符" 应命中扩源新写的 chunk
+    assert store.search("QBCore QBox 迁移") or store.search("QBox 迁移")
+    assert store.search("oxmysql ? 占位符") or store.search("oxmysql 占位符")
 
 
 # ---------------- 工具适配 ----------------

@@ -280,6 +280,25 @@ def build_dispatcher(
             "items": [s.model_dump() for s in syms],
         }
 
+    async def knowledge_symbols_by_prefix(
+        params: dict[str, Any],
+    ) -> dict[str, Any]:
+        prefix = str(params.get("prefix", "")).strip()
+        if not prefix:
+            return {"items": []}
+        namespaces = params.get("namespaces")
+        kinds = params.get("kinds")
+        limit = int(params.get("limit", 30))
+        syms = knowledge.search_symbols_by_prefix(
+            prefix,
+            namespaces=namespaces,
+            kinds=kinds,
+            limit=limit,
+        )
+        return {
+            "items": [s.model_dump() for s in syms],
+        }
+
     # ---------------- memory ----------------
 
     async def memory_recall(params: dict[str, Any]) -> dict[str, Any]:
@@ -490,6 +509,7 @@ def build_dispatcher(
         "presets.remove": presets_remove,
         "knowledge.search": knowledge_search,
         "knowledge.symbol": knowledge_symbol,
+        "knowledge.symbols_by_prefix": knowledge_symbols_by_prefix,
         "memory.recall": memory_recall,
         "memory.write": memory_write,
         "memory.list": memory_list,

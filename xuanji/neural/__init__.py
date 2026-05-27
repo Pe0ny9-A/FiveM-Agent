@@ -12,7 +12,20 @@ M1+ 演进：
 - Rollback: 基于 Audit 回放
 """
 
+from __future__ import annotations
+
+from typing import TYPE_CHECKING, Any
+
 from xuanji.neural.audit import AuditEvent, AuditLog
-from xuanji.neural.conductor import Conductor, SessionCtx
+
+if TYPE_CHECKING:
+    from xuanji.neural.conductor import Conductor, SessionCtx
 
 __all__ = ["AuditEvent", "AuditLog", "Conductor", "SessionCtx"]
+
+
+def __getattr__(name: str) -> Any:
+    if name in {"Conductor", "SessionCtx"}:
+        from xuanji.neural import conductor as _conductor
+        return getattr(_conductor, name)
+    raise AttributeError(f"module {__name__!r} has no attribute {name!r}")

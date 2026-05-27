@@ -20,7 +20,14 @@ interface IncomingCommand {
     args?: Record<string, unknown>;
 }
 
-type Incoming = IncomingRpcCall | IncomingCommand;
+interface IncomingHostCall {
+    type: "host.call";
+    id: number;
+    method: string;
+    params?: Record<string, unknown>;
+}
+
+type Incoming = IncomingRpcCall | IncomingCommand | IncomingHostCall;
 
 type NotificationFwd = (method: string, params: Record<string, unknown>) => void;
 
@@ -176,7 +183,158 @@ export class XuanjiWorkbench {
             if (typeof msg.command === "string" && msg.command.startsWith("xuanji.")) {
                 await vscode.commands.executeCommand(msg.command, args);
             }
+        } else if (msg.type === "host.call") {
+            const id = msg.id;
+            try {
+                const result = await this.handleHostCall(
+                    msg.method,
+                    msg.params || {},
+                );
+                void webview.postMessage({ type: "host.result", id, result });
+            } catch (e) {
+                const message = e instanceof Error ? e.message : String(e);
+                void webview.postMessage({
+                    type: "host.error",
+                    id,
+                    error: { code: -32603, message },
+                });
+            }
         }
+    }
+
+    private async handleHostCall(
+        method: string,
+        params: Record<string, unknown>,
+    ): Promise<unknown> {
+        switch (method) {
+            case "host.pickFiles":
+                return await this.pickFiles(params);
+            case "host.pickImage":
+                return await this.pickImage();
+            case "host.getActiveSelection":
+                return this.getActiveSelection();
+            case "host.getOpenFiles":
+                return this.getOpenFiles();
+            default:
+                throw new Error(`未知 host 方法：${method}`);
+        }
+    }
+
+    private async pickFiles(params: Record<string, unknown>): Promise<unknown> {
+        const canSelectMany = Boolean(params.multiple ?? true);
+        const uris = await vscode.window.showOpenDialog({
+            canSelectFiles: true,
+            canSelectFolders: false,
+            canSelectMany,
+            openLabel: "添加为上下文",
+        });
+        if (!uris || uris.length === 0) return { items: [] };
+        const root = vscode.workspace.workspaceFolders?.[0]?.uri.fsPath;
+        const items = await Promise.all(
+            uris.map(async (u) => {
+                let text = "";
+                let truncated = false;
+                try {
+                    const buf = await vscode.workspace.fs.readFile(u);
+                    const raw = Buffer.from(buf).toString("utf-8");
+                    if (raw.length > 60_000) {
+                        text = raw.slice(0, 60_000);
+                        truncated = true;
+                    } else {
+                        text = raw;
+                    }
+                } catch (e) {
+                    text = `[读取失败：${e instanceof Error ? e.message : String(e)}]`;
+                }
+                const fsPath = u.fsPath;
+                const relPath =
+                    root && fsPath.startsWith(root)
+                        ? path.relative(root, fsPath).split(path.sep).join("/")
+                        : fsPath;
+                return { path: relPath, text, truncated };
+            }),
+        );
+        return { items };
+    }
+
+    private async pickImage(): Promise<unknown> {
+        const uris = await vscode.window.showOpenDialog({
+            canSelectFiles: true,
+            canSelectFolders: false,
+            canSelectMany: false,
+            openLabel: "插入图片引用",
+            filters: { 图片: ["png", "jpg", "jpeg", "gif", "webp", "bmp"] },
+        });
+        if (!uris || uris.length === 0) return { item: null };
+        const u = uris[0];
+        const root = vscode.workspace.workspaceFolders?.[0]?.uri.fsPath;
+        const relPath =
+            root && u.fsPath.startsWith(root)
+                ? path.relative(root, u.fsPath).split(path.sep).join("/")
+                : u.fsPath;
+        return { item: { path: relPath } };
+    }
+
+    private getActiveSelection(): unknown {
+        const editor = vscode.window.activeTextEditor;
+        if (!editor) return { item: null };
+        const sel = editor.selection;
+        if (sel.isEmpty) {
+            // 没选中——退化为整个文档 + 光标行号
+            const doc = editor.document;
+            const root = vscode.workspace.workspaceFolders?.[0]?.uri.fsPath;
+            const fp = doc.uri.fsPath;
+            const relPath =
+                root && fp.startsWith(root)
+                    ? path.relative(root, fp).split(path.sep).join("/")
+                    : fp;
+            return {
+                item: {
+                    path: relPath,
+                    text: doc.getText(),
+                    line_from: editor.selection.active.line + 1,
+                    line_to: editor.selection.active.line + 1,
+                    is_full_file: true,
+                },
+            };
+        }
+        const text = editor.document.getText(sel);
+        const fp = editor.document.uri.fsPath;
+        const root = vscode.workspace.workspaceFolders?.[0]?.uri.fsPath;
+        const relPath =
+            root && fp.startsWith(root)
+                ? path.relative(root, fp).split(path.sep).join("/")
+                : fp;
+        return {
+            item: {
+                path: relPath,
+                text,
+                line_from: sel.start.line + 1,
+                line_to: sel.end.line + 1,
+                is_full_file: false,
+            },
+        };
+    }
+
+    private getOpenFiles(): unknown {
+        const root = vscode.workspace.workspaceFolders?.[0]?.uri.fsPath;
+        const items: { path: string; active: boolean }[] = [];
+        const seen = new Set<string>();
+        for (const tabGroup of vscode.window.tabGroups.all) {
+            for (const tab of tabGroup.tabs) {
+                const input = tab.input as { uri?: vscode.Uri } | undefined;
+                if (!input?.uri) continue;
+                const fp = input.uri.fsPath;
+                if (seen.has(fp)) continue;
+                seen.add(fp);
+                const relPath =
+                    root && fp.startsWith(root)
+                        ? path.relative(root, fp).split(path.sep).join("/")
+                        : fp;
+                items.push({ path: relPath, active: tab.isActive });
+            }
+        }
+        return { items };
     }
 
     private webviewOptions(): vscode.WebviewOptions & vscode.WebviewPanelOptions {

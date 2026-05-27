@@ -2,6 +2,98 @@
 
 所有重要的变更都记在这里。版本号遵守 [SemVer](https://semver.org/lang/zh-CN/)。
 
+## [1.2.0] — 2026-05-27
+
+**工具自愈 + 知识库扩源 + 群英会深度协作**。这一版把内核的"长尾自治力"补齐：工具工厂能自动跨 LLM 修自己写出来的烂代码、知识库覆盖到 QBox/ESX/oxmysql/natives 全栈、sub-agent 能递归召唤同伴让长任务真正可拆。
+
+### Added · ToolFactory 三轮自修复回路（[xuanji/tools/tool_factory.py](xuanji/tools/tool_factory.py)）
+
+- 新方法 `repair(slug)`：当 `test()` 失败，把 broken code + pytest log 喂回 LLM，要它在原方案上改一版。
+- 新方法 `autofix(slug, max_rounds=3)`：把 generate → test → (fail) repair → test 串成一条流水线，最多重试 N 轮，最后一轮仍失败就标 `failed_after_retries` 让小宝介入。
+- `FactoryStatus` 持久化新增 `repair_rounds` / `repair_log` / `last_test_output` / `last_test_passed` 字段，DB 层用 `_ensure_columns(conn)` 做 PRAGMA 表结构迁移，老用户零打扰升级。
+- 新 CLI：`xuanji tool autofix <slug> [--max-rounds 3]`，带 Rich Panel 显示每轮修复尝试 + 最终 pytest 输出。
+- 22 个 tool factory loop 单测全绿（含 5 个新 autofix 测）。
+
+### Added · FiveM 知识库 SkillGraph 扩源（[xuanji/knowledge/sources/seeds.py](xuanji/knowledge/sources/seeds.py)）
+
+- 新增 4 个命名空间：`fivem.qbox@main` / `fivem.esx@1.13` / `fivem.oxmysql@2.x` / `fivem.natives@latest`。
+- 27 条新 Symbol：QBox 4 个 export、ESX 6 个核心 API、oxmysql 6 个查询函数、FiveM natives 11 个高频函数（PlayerPedId / GetEntityCoords / TriggerEvent 等）。
+- 8 条新 Chunk 概念卡：QBox 与 QBCore 迁移指南、框架选型对照、oxmysql 事务模式、FiveM 事件流 / 线程模型 / 坐标系。
+- 让稷下生在 `lookup_symbol` / `knowledge_search` 时多框架直接命中，不再"答非所问 ESX 而代码是 QBox"。
+
+### Added · 群英会深度协作（[xuanji/ensemble/supervisor.py](xuanji/ensemble/supervisor.py)）
+
+- `DispatchSubagentTool` 增加 `depth` / `max_depth` / `parent_role` 三个字段，每次召唤 sub-agent 时把下一层 `dispatch_subagent`（depth+1）注入它的工具集，**让稷下生可以中途召唤百工匠落地代码**。
+- `max_depth` 默认 2，达到上限 dispatch 工具自身报 ToolError 拒绝继续，避免无限递归。
+- 输出新增 `depth` + `parent_role` 元信息，transcript 串得起整条链路。
+- `JIXIA_ROLE` / `TIANSHU_ROLE` 的 `allowed_tools` 加 `dispatch_subagent`：稷下生查完可叫百工匠写代码、天枢令拆完计划可叫稷下生先验证某个阶段。
+- 6 个 `tests/test_subagent_recursion.py` 新单测覆盖深度限制 / 元信息透出 / nested 注入。
+
+### Added · 规则启发式语义压缩（[xuanji/neural/compaction.py](xuanji/neural/compaction.py)）
+
+- 新增 `score_message(msg, *, later_messages)` 三维打分：含工具调用 +0.35 / 文本长度线性 0..0.30 / 关键词被后续消息引用 +0.35，归一到 0..1。
+- `compact_history()` 依分数挑摘要长度——高分（≥0.7）原样保留 240 字 ★ 标记，低分（≤0.25）且无工具调用的直接丢弃，中分用短摘要 · 标记。
+- `CompactionConfig` 新增 `importance_high_threshold` / `importance_low_threshold` 两个旋钮。
+- 还是不调 LLM 做摘要——零依赖、零额外 token，M5+ 想升级时只换 `_summarize_pair`。
+- 16 个 `tests/test_compaction.py` 单测（5 个新测覆盖打分各维度 + ★/· 标记 + 低分丢弃）。
+
+### Fixed · 模块循环导入
+
+- `xuanji/neural/__init__.py` 改用 `__getattr__` 懒加载 `Conductor` / `SessionCtx`，破解 `xuanji.config.store → xuanji.neural.compaction → xuanji.neural.__init__ → conductor → providers.factory` 的环路。
+- 直接 `from xuanji.neural import Conductor` 仍兼容；`from xuanji.neural.compaction import …` 不再触发 conductor 导入。
+
+### Tests
+
+- 全套：**529 passed / 1 skipped**，ruff + mypy strict 全绿。
+- 新增：22 工厂循环测、6 递归 dispatch 测、5 压缩打分测、知识库 1 个综合扩源测。
+
+## [1.1.0] — 2026-05-27
+
+**工作台体验三件套**：聊天活动状态栏 + 会话窗口持久化 + Profiles 可用模型检测与 Anthropic 线协议支持。这一版把 cc switch 类工具的「填了 key 不知道能不能用」痛点彻底封死。
+
+### Added · 输入框下方活动状态栏（apps/vscode/webview/）
+
+- 仿 Claude Code 的状态条，挂在 [ChatTab.tsx](apps/vscode/webview/src/tabs/ChatTab.tsx) 输入框正下方。
+- 实时呈现最新一条 assistant 消息的工具事件（最多 6 条）：
+  - 📖 `read_file` → 显示路径 + 行号范围，可点击跳转
+  - ✏️ `write_file` → 显示路径，可点击
+  - 📁 `list_dir` → 显示目录
+  - 🔍 `ripgrep` → 显示 pattern + 路径
+  - `$` `run_shell` → 显示完整命令（不可点）
+- 状态指示：⏳ 运行中 / 🔒 被 Gate 拦 / ✓ 成功 / ✗ 失败 + 耗时。
+- 闲置时显示「玄玑闲着 · 等小宝下个指令」。
+
+### Added · 会话窗口持久化（apps/vscode/webview/src/chatStore.ts）
+
+- 用 `vscode.setState/getState` 把会话列表（标题 / profile / 消息历史）持久化到 webview state，关闭 VS Code 重开仍在。
+- 后端 `session_id` 重启即失效——恢复出来的会话标记 `archived=true`，小宝首次发送时自动 `chat.start` 拿新 id 接上，对话历史前端保留、不打断。
+- 同步去抖（200ms）写入，避免每次 delta 都 setState。
+- 新增 `hydrate()` 入口，`ChatTab` 在 hydrate 完成前不会自动建新会话——之前会一次开 2 个空会话。
+
+### Added · Profiles 可用模型检测（参考 cc switch / OneAPI）
+
+- 新增 `OpenAICompatibleProfile.wire_format` 字段：
+  - `openai`（默认）→ POST `/v1/chat/completions`
+  - `anthropic` → POST `/v1/messages`，给 NewAPI/OneAPI 转发的 Claude 端点用
+- factory 自动按 wire_format 选 Provider：openai-compatible + anthropic 协议会复用 AnthropicProvider，享受 Extended Thinking / Prompt Cache。
+- 新增 [xuanji/config/probe.py](xuanji/config/probe.py)：纯 httpx 实现 `list_models()` 与 `ping()`，8 秒超时，认证头按 wire_format 自动切换（`x-api-key`+`anthropic-version` vs `Authorization: Bearer`）。
+- 新增两个 IPC 方法（[ipc/config_methods.py](xuanji/ipc/config_methods.py)）：
+  - `profiles.list_models` —— 拉端点返回的模型清单
+  - `profiles.test` —— 1 token 握手验证 api_key + wire_format 联通，返回 latency_ms / status / error
+- 两者都支持「编辑中实时探测」：传 `name` 用已存的 key，传完整字段则用临时 profile，新建时填一半就能预览。
+
+### Added · Profiles 编辑器升级（apps/vscode/webview/src/tabs/ProfilesTab.tsx）
+
+- 选 `openai-compatible` 时新增 `wire_format` 下拉。
+- `default_model` 旁边「拉取」按钮：调 `profiles.list_models` 后变成下拉框，自动挑第一个填上。
+- 「🔌 测试连接」按钮：实时显示 ✓ 连通 + 延迟 + HTTP 状态码 / ✗ 错误信息。
+- 列表卡片显示 wire 协议徽标。
+
+### Tests
+
+- 新增 `tests/test_config_probe.py` 共 7 个测：URL 拼接、`/data` vs 顶层 list 解析、anthropic/openai 200/401、wire_format=anthropic 时确实打 `/v1/messages` 且带 `x-api-key`。
+- 全套：**507 passed / 1 skipped**，ruff + mypy strict 全绿。
+
 ## [1.0.1] — 2026-05-27
 
 **vibe coding 主动摸底 + 工作台对话 UI 修复**。1.0.0 装机后两个真实痛点的快速跟进。

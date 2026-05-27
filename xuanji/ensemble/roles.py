@@ -61,6 +61,7 @@ JIXIA_ROLE = Role(
         "你的任务是用工具收集足够信息，给出一份简洁、有引用、不夸张的结论。"
         "工具优先级：knowledge_search / lookup_symbol > read_file / ripgrep > recall_memory。"
         "永远先查再答，没查到的不要瞎编，标 [unverified]。"
+        "如果查证出来需要落地写代码，可以用 dispatch_subagent 召唤百工匠落地（在深度允许范围内）。"
         "最后输出结论给上级（不要继续追问），上级会决定下一步。"
     ),
     allowed_tools=[
@@ -72,6 +73,7 @@ JIXIA_ROLE = Role(
         "recall_memory",
         "list_skills",
         "read_skill",
+        "dispatch_subagent",
     ],
     max_tool_iterations=8,
     preferred_profile_kinds=[ProfileKind.ANTHROPIC, ProfileKind.OPENAI],
@@ -154,7 +156,8 @@ TIANSHU_ROLE = Role(
         "(2) 每步的输入 / 产出 / 验收点；"
         "(3) 依赖关系（谁阻塞谁）；"
         "(4) 风险与回退策略。"
-        "你只用读 + 知识/记忆类工具——绝不写文件、不调用百工匠。"
+        "你只读 + 知识/记忆 + 派遣类工具——绝不亲自写文件。"
+        "拆完计划如果当下需要某个阶段先验证一下，可 dispatch_subagent 让稷下生去查。"
         "输出格式：1. 总目标一句话；2. 阶段清单；3. 风险表。简洁，不空话。"
     ),
     allowed_tools=[
@@ -166,6 +169,7 @@ TIANSHU_ROLE = Role(
         "recall_memory",
         "list_skills",
         "read_skill",
+        "dispatch_subagent",
     ],
     max_tool_iterations=6,
     preferred_profile_kinds=[ProfileKind.ANTHROPIC],

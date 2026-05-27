@@ -18,6 +18,7 @@ import json
 import textwrap
 import time
 from pathlib import Path
+from typing import Any
 
 import pytest
 
@@ -226,6 +227,175 @@ def test_reject_marks_status(tmp_path: Path) -> None:
     status = factory.reject(slug, reason="不合 schema")
     assert status.status == "rejected"
     assert "rejected" in status.last_test_output
+
+
+# ---------------- autofix（generate → test → repair → test 自修复回路） ----------------
+
+
+class _FakeProvider:
+    """给 autofix 测试用的假 provider：返回排好的 codegen + repair 输出。"""
+
+    def __init__(self, outputs: list[str]) -> None:
+        self._outputs = list(outputs)
+        self.calls: list[dict[str, Any]] = []
+
+    async def chat(self, **kw: Any) -> Any:  # type: ignore[no-untyped-def]
+        self.calls.append(kw)
+        text = self._outputs.pop(0) if self._outputs else ""
+
+        class _Msg:
+            def __init__(self, t: str) -> None:
+                self.text = t
+
+        return _Msg(text)
+
+
+def _wrap_blocks(tool_src: str, test_src: str) -> str:
+    return (
+        "解释一句。\n"
+        "```python:tool\n"
+        + tool_src
+        + "\n```\n"
+        "中间废话。\n"
+        "```python:test\n"
+        + test_src
+        + "\n```\n"
+        "结尾。"
+    )
+
+
+def _autofix_factory(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    outputs: list[str],
+) -> tuple[ToolFactory, _FakeProvider]:
+    """造出带 fake LLM 的 ToolFactory，monkeypatch build_provider。"""
+    from xuanji.config.profiles import DeepSeekProfile
+
+    fake = _FakeProvider(outputs)
+    monkeypatch.setattr(
+        "xuanji.tools.tool_factory.build_provider",
+        lambda _profile: fake,
+    )
+    factory = ToolFactory(
+        drafts_dir=tmp_path / "drafts",
+        staged_dir=tmp_path / "staged",
+        published_dir=tmp_path / "published",
+        registry=FactoryRegistry(tmp_path / "f.db"),
+        profile=DeepSeekProfile(
+            label="t", api_key="sk-test-placeholder", default_model="ds-x",
+        ),
+        model="ds-x",
+    )
+    return factory, fake
+
+
+_GOOD_TOOL = "RESULT = 42\n"
+_GOOD_TEST = (
+    "import sys\nfrom pathlib import Path\n"
+    "sys.path.insert(0, str(Path(__file__).parent))\n"
+    "from echo_tool import RESULT\n\n"
+    "def test_ok():\n    assert RESULT == 42\n"
+)
+
+_BAD_TOOL = "RESULT = 0\n"
+_BAD_TEST = (
+    "import sys\nfrom pathlib import Path\n"
+    "sys.path.insert(0, str(Path(__file__).parent))\n"
+    "from echo_tool import RESULT\n\n"
+    "def test_ok():\n    assert RESULT == 42\n"
+)
+
+
+@pytest.mark.asyncio
+async def test_autofix_passes_first_try(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """第一次 generate 就通过——repair_rounds 应保持 0。"""
+    factory, fake = _autofix_factory(
+        tmp_path,
+        monkeypatch,
+        outputs=[_wrap_blocks(_GOOD_TOOL, _GOOD_TEST)],
+    )
+    _seed_draft(factory, "echo_tool")
+    status = await factory.autofix("echo_tool", max_rounds=3)
+    assert status.last_test_passed is True
+    assert status.status == "tested"
+    assert status.repair_rounds == 0
+    assert len(fake.calls) == 1  # 只调了 codegen
+
+
+@pytest.mark.asyncio
+async def test_autofix_repairs_then_passes(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """第一次失败、第二次（repair）成功——repair_rounds=1，repair_log 有一条。"""
+    factory, fake = _autofix_factory(
+        tmp_path,
+        monkeypatch,
+        outputs=[
+            _wrap_blocks(_BAD_TOOL, _BAD_TEST),    # codegen 第一版坏的
+            _wrap_blocks(_GOOD_TOOL, _GOOD_TEST),  # repair 修好的
+        ],
+    )
+    _seed_draft(factory, "echo_tool")
+    status = await factory.autofix("echo_tool", max_rounds=3)
+    assert status.last_test_passed is True
+    assert status.status == "tested"
+    assert status.repair_rounds == 1
+    assert len(status.repair_log) == 1
+    assert status.repair_log[0]["round"] == 1
+    assert len(fake.calls) == 2
+
+
+@pytest.mark.asyncio
+async def test_autofix_gives_up_after_max_rounds(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """三轮全失败——状态切到 failed_after_retries。"""
+    factory, fake = _autofix_factory(
+        tmp_path,
+        monkeypatch,
+        outputs=[_wrap_blocks(_BAD_TOOL, _BAD_TEST)] * 4,  # 1 codegen + 3 repair 全坏
+    )
+    _seed_draft(factory, "echo_tool")
+    status = await factory.autofix("echo_tool", max_rounds=3)
+    assert status.last_test_passed is False
+    assert status.status == "failed_after_retries"
+    assert status.repair_rounds == 3
+    assert len(fake.calls) == 4  # codegen + 3 repair
+
+
+@pytest.mark.asyncio
+async def test_autofix_preserves_repair_log_through_persist(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """跑完 autofix 后从 SQLite 重新读出 repair_log，应能反序列化回来。"""
+    factory, _ = _autofix_factory(
+        tmp_path,
+        monkeypatch,
+        outputs=[
+            _wrap_blocks(_BAD_TOOL, _BAD_TEST),
+            _wrap_blocks(_GOOD_TOOL, _GOOD_TEST),
+        ],
+    )
+    _seed_draft(factory, "echo_tool")
+    await factory.autofix("echo_tool", max_rounds=3)
+    reloaded = factory.registry.get("echo_tool")
+    assert reloaded is not None
+    assert reloaded.repair_rounds == 1
+    assert len(reloaded.repair_log) == 1
+    assert "ts" in reloaded.repair_log[0]
+
+
+def test_autofix_invalid_max_rounds_raises(tmp_path: Path) -> None:
+    factory = _make_factory(tmp_path)
+    _seed_draft(factory, "echo_tool")
+    with pytest.raises(ValueError, match=r"max_rounds"):
+        # 跑 ValueError 不需要 await——验证前置参数即返回
+        import asyncio as _asyncio
+
+        _asyncio.run(factory.autofix("echo_tool", max_rounds=0))
 
 
 # ---------------- published_loader ----------------

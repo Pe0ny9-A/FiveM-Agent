@@ -5,8 +5,9 @@
 压缩点之后的历史保持原样不动。
 
 设计取舍：
-- **不调 LLM 做摘要**：第一版用规则提取（保留每轮文本前 240 字 + 工具调用名清单），
-  零依赖、不引入额外 token 成本，且在 reasoning 模型链上不会触发新一轮思考。
+- **规则启发式打分挑重点**（1.2.0）：每条消息按 (a) 工具调用次数 (b) 文本长度
+  (c) 被后续 user/assistant 引用次数 三维加权，分高的消息保留原文摘要长度，
+  分低的只留首段或干脆丢弃。**不调 LLM 做摘要**，零依赖、零额外 token。
   M5+ 想升级成"用 Haiku/Flash 做摘要"时只需替换 `_summarize_pair`。
 - **保留尾部 keep_recent_turns 轮**：默认 4 轮，最近的对话原样保留，确保模型
   仍能看到最新意图与工具结果。
@@ -19,6 +20,7 @@
 from __future__ import annotations
 
 import json
+import re
 from typing import Any
 
 from pydantic import BaseModel
@@ -46,7 +48,13 @@ class CompactionConfig(BaseModel):
     """从末尾保留多少轮原文不压缩。一轮 = 一条 user + 后续 assistant/tool 序列。"""
 
     summary_per_turn_chars: int = 240
-    """单轮压缩后保留多少字符的文本预览。"""
+    """单轮压缩后**最高**保留多少字符的文本预览。低分消息会被进一步压短。"""
+
+    importance_high_threshold: float = 0.7
+    """打分 ≥ 这个阈值算"高分"，原样保留 summary_per_turn_chars 字符。"""
+
+    importance_low_threshold: float = 0.25
+    """打分 ≤ 这个阈值算"低分"，只留 60 字摘要。低于这个但有工具调用仍会保留摘要。"""
 
     @property
     def max_context_chars(self) -> int:
@@ -94,6 +102,69 @@ def _msg_preview(m: Message, limit: int) -> str:
     return " ".join(parts)[: limit * 2]
 
 
+def _msg_text(m: Message) -> str:
+    """把消息所有可见文本拼成一串，给打分函数用。"""
+    if isinstance(m.content, str):
+        return m.content
+    parts: list[str] = []
+    for b in m.content:
+        if isinstance(b, TextBlock):
+            parts.append(b.text)
+        elif isinstance(b, ToolResultBlock):
+            parts.append(b.output)
+    return " ".join(parts)
+
+
+def _msg_tool_calls(m: Message) -> list[ToolCallBlock]:
+    if isinstance(m.content, str):
+        return []
+    return [b for b in m.content if isinstance(b, ToolCallBlock)]
+
+
+_KEYWORD_RE = re.compile(r"[A-Za-z_][A-Za-z0-9_:.]{2,}|[一-鿿]{3,}")
+
+
+def _keywords(text: str) -> set[str]:
+    """从消息文本里抽出标识符 + 中文短语作为引用判据。"""
+    return {m.group(0) for m in _KEYWORD_RE.finditer(text)}
+
+
+def score_message(
+    msg: Message,
+    *,
+    later_messages: list[Message],
+    max_text_chars: int = 2000,
+) -> float:
+    """规则启发式打分：返回 0..1。越高越值得保留原文。
+
+    维度（加权后归一到 0..1）：
+    - tool_call_weight：消息含工具调用 → +0.35。tool result（角色 tool）也算
+    - long_text_weight：文本长度 0..max_text_chars → 线性映射 0..0.30
+    - reference_weight：消息里抽出的关键词被 later_messages 引用过 → +0.35
+
+    Why: 工具调用通常是"事件性证据"，不能丢；长 prompt 往往含约束/规范；
+    被后续轮引用的关键词意味着这条仍在话题里。
+    """
+    score = 0.0
+    text = _msg_text(msg)
+
+    if _msg_tool_calls(msg) or msg.role == "tool":
+        score += 0.35
+
+    text_len = min(len(text), max_text_chars)
+    score += 0.30 * (text_len / max_text_chars) if max_text_chars else 0
+
+    # 引用计数：关键词被后续消息提到的比例
+    kws = _keywords(text)
+    if kws and later_messages:
+        later_blob = " ".join(_msg_text(m) for m in later_messages)
+        hit = sum(1 for k in kws if k in later_blob)
+        ratio = hit / max(1, len(kws))
+        score += 0.35 * min(1.0, ratio * 2)  # 命中一半就拉满
+
+    return min(1.0, score)
+
+
 def _find_safe_split(history: list[Message], keep_recent_turns: int) -> int:
     """从末尾倒数 keep_recent_turns 个 user 消息处切。返回切点 index。
 
@@ -112,7 +183,7 @@ def compact_history(
     """对 history 做自动压缩。返回 (新历史, 估算节省的 token 数)。
 
     - 不达阈值：原样返回，savings=0
-    - 达阈值：把切点之前的所有消息折叠成一条 user 消息（带"以下是历史摘要"标记）
+    - 达阈值：把切点之前的所有消息按规则启发式打分摘要、折叠成一条 user 消息
     """
     if not config.enabled:
         return history, 0
@@ -127,13 +198,29 @@ def compact_history(
     head = history[:split_at]
     tail = history[split_at:]
 
-    summary_lines: list[str] = ["[历史摘要——之前的对话已折叠以节省 token]"]
-    for m in head:
-        preview = _msg_preview(m, config.summary_per_turn_chars)
+    summary_lines: list[str] = ["[历史摘要——按规则启发式打分挑选要点]"]
+    high_limit = config.summary_per_turn_chars
+    low_limit = max(40, high_limit // 4)
+    for i, m in enumerate(head):
+        # later_messages 包括 head 后续 + 整段 tail
+        later = head[i + 1:] + tail
+        s = score_message(m, later_messages=later)
+
+        if s >= config.importance_high_threshold:
+            limit = high_limit
+            tag = "★"
+        elif s <= config.importance_low_threshold and not _msg_tool_calls(m):
+            # 低分且无工具调用——直接跳过
+            continue
+        else:
+            limit = low_limit
+            tag = "·"
+
+        preview = _msg_preview(m, limit)
         if not preview:
             continue
         prefix = {"user": "小宝", "assistant": "姐姐", "tool": "工具"}.get(m.role, m.role)
-        summary_lines.append(f"- {prefix}：{preview}")
+        summary_lines.append(f"{tag} {prefix}：{preview}")
     summary = "\n".join(summary_lines)
 
     compacted: list[Message] = [Message(role="user", content=summary), *tail]
@@ -146,4 +233,5 @@ __all__ = [
     "CompactionConfig",
     "compact_history",
     "estimate_tokens",
+    "score_message",
 ]

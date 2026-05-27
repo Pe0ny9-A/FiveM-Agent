@@ -7,6 +7,8 @@
 - 流式事件自动透传（tool_run_started / tool_run_done 包装一切）
 
 0.6 起：sub-agent 可异构——按 role 偏好或显式 profile_override 路由到不同 profile。
+1.2 起：sub-agent 可递归 dispatch——稷下生可在中途召唤百工匠落地代码。
+深度由 max_depth 限制（默认 2 层），防失控；parent_role / depth 串到 transcript。
 """
 
 from __future__ import annotations
@@ -31,6 +33,11 @@ class DispatchSubagentTool(Tool):
     - args.profile_override 命中 self._profiles 时直接用
     - 否则按 role.preferred_profile_kinds 让 ModelRouter 挑
     - 都没匹配时退到 self._default_profile（向后兼容单 profile 场景）
+
+    递归深度：
+    - depth=0 是主 Conductor 自己持有的实例
+    - depth=N 是被某个 sub-agent 持有的"嵌套召唤"实例
+    - depth >= max_depth 时拒绝召唤，避免无限递归
     """
 
     name = "dispatch_subagent"
@@ -41,6 +48,7 @@ class DispatchSubagentTool(Tool):
         "可用角色见 list_roles。中文正名或英文别名都可（researcher / 稷下生 等价）。"
         "可选 profile_override：跨家用模型（如司鉴强制 Anthropic，稷下生用 DeepSeek）。"
         "sub-agent 跑完会返回 final_text，由你（Supervisor）综合再回复用户。"
+        "Sub-agent 拿到这个工具时也可继续调它召唤另一位（受深度限制）。"
     )
     risk = RiskTag.SAFE  # 子调用本身无副作用，工具白名单已限制了破坏面
     schema: ClassVar[dict[str, Any]] = {
@@ -92,6 +100,9 @@ class DispatchSubagentTool(Tool):
         model: str | None = None,
         profiles: dict[str, Profile] | None = None,
         active_profile_name: str | None = None,
+        depth: int = 0,
+        max_depth: int = 2,
+        parent_role: str | None = None,
     ) -> None:
         # 兼容 0.5 调用（profile=）+ 0.6 命名（default_profile=）
         chosen_default = default_profile or profile
@@ -111,8 +122,19 @@ class DispatchSubagentTool(Tool):
             if self._profiles
             else None
         )
+        self._depth = depth
+        self._max_depth = max_depth
+        self._parent_role = parent_role
 
     async def execute(self, args: dict[str, Any], ctx: ToolCtx) -> ToolResult:
+        if self._depth >= self._max_depth:
+            raise ToolError(
+                f"sub-agent 递归深度已达上限 max_depth={self._max_depth}，"
+                f"当前深度 {self._depth}（parent={self._parent_role!r}）。"
+                "再嵌套一层会失控——请把任务平铺给一位 sub-agent 处理，"
+                "或在主 Conductor 这层重新拆分。"
+            )
+
         raw_role = (args.get("role") or "").strip()
         canonical = resolve_role_name(raw_role, self._roles)
         if canonical is None:
@@ -126,10 +148,32 @@ class DispatchSubagentTool(Tool):
         role = self._roles[canonical]
         chosen_profile, chosen_model, route_reason = self._select_profile(role, args)
 
+        # 给 sub-agent 注入下一层 dispatch_subagent（depth+1）。
+        # 当 sub-agent 的 allowed_tools 含 dispatch_subagent 或 "*" 时生效；
+        # 否则下一层 SubAgent.__init__ 自然过滤掉，不会出现在它的工具集。
+        nested_dispatch = DispatchSubagentTool(
+            roles=self._roles,
+            master_registry=self._master_registry,
+            project_root=self._project_root,
+            default_profile=self._default_profile,
+            hitl_bridge=self._hitl_bridge,
+            model=self._model,
+            profiles=self._profiles,
+            active_profile_name=self._active_profile_name,
+            depth=self._depth + 1,
+            max_depth=self._max_depth,
+            parent_role=role.name,
+        )
+        sub_master_registry = ToolRegistry()
+        for t in self._master_registry.all():
+            if t.name != "dispatch_subagent":
+                sub_master_registry.register(t)
+        sub_master_registry.register(nested_dispatch)
+
         sub = SubAgent(
             role,
             profile=chosen_profile,
-            master_registry=self._master_registry,
+            master_registry=sub_master_registry,
             hitl_bridge=self._hitl_bridge,
             project_root=self._project_root,
             model=chosen_model,
@@ -143,6 +187,8 @@ class DispatchSubagentTool(Tool):
                 "tool_calls_made": result.tool_calls_made,
                 "iterations": result.iterations,
                 "truncated": result.truncated,
+                "depth": self._depth + 1,
+                "parent_role": self._parent_role,
                 "routing": {
                     "profile_kind": chosen_profile.kind.value,
                     "model": chosen_model,
@@ -275,12 +321,14 @@ def supervisor_tools(
     model: str | None = None,
     profiles: dict[str, Profile] | None = None,
     active_profile_name: str | None = None,
+    max_depth: int = 2,
 ) -> list[Tool]:
     """工厂：返回 dispatch_subagent + list_roles + list_profiles。
 
     - profile：默认 profile，单 profile 用户唯一可用项
     - profiles / active_profile_name：异构路由所需的全量 profile 字典；
       留空 = 0.5 行为，所有 sub-agent 都用 profile 这一家。
+    - max_depth：sub-agent 递归召唤上限。默认 2 = 最多两层嵌套（Supervisor → A → B）。
     """
     return [
         DispatchSubagentTool(
@@ -292,6 +340,9 @@ def supervisor_tools(
             model=model,
             profiles=profiles,
             active_profile_name=active_profile_name,
+            depth=0,
+            max_depth=max_depth,
+            parent_role=None,
         ),
         ListRolesTool(roles),
         ListProfilesTool(profiles or {profile.label: profile}, active_profile_name),

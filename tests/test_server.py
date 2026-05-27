@@ -40,7 +40,11 @@ def runtime(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> ServerRuntime:
         ),
         activate=True,
     )
-    return ServerRuntime(cfg_store=cfg, project_namespace="testproj")
+    return ServerRuntime(
+        cfg_store=cfg,
+        project_namespace="testproj",
+        seed_knowledge=False,
+    )
 
 
 def test_healthz(runtime: ServerRuntime) -> None:

@@ -22,6 +22,7 @@ from __future__ import annotations
 import asyncio
 import contextlib
 import sys
+import time
 from pathlib import Path
 from typing import Any
 
@@ -1619,6 +1620,68 @@ def tool_reject(
     console.print(f"[yellow]已拒绝：{slug}[/yellow]（status={status.status}）")
     if reason:
         console.print(f"[dim]reason: {reason}[/dim]")
+
+
+@tool_app.command("autofix")
+def tool_autofix(
+    slug: str = typer.Argument(..., help="草案 slug（不带 .json 后缀）"),
+    max_rounds: int = typer.Option(
+        3, "--max-rounds", help="自修复最大轮数（不含初次 generate）",
+    ),
+) -> None:
+    """一气呵成：generate → test → 失败则 repair → test，最多 N 轮。
+
+    用在小宝懒得手动按部就班 generate / test / 看日志 / 重新 generate 时。
+    最终落到 status=tested（成功）或 failed_after_retries（用尽轮数）。
+    """
+    factory = _open_factory()
+    if factory.profile is None:
+        console.print("[red]没有激活的 profile，先 xuanji config use <name>[/red]")
+        raise typer.Exit(1)
+
+    async def _run() -> Any:
+        return await factory.autofix(slug, max_rounds=max_rounds)
+
+    try:
+        status = asyncio.run(_run())
+    except FileNotFoundError as e:
+        console.print(f"[red]{e}[/red]")
+        raise typer.Exit(1) from e
+    except ValueError as e:
+        console.print(f"[red]autofix 失败：{e}[/red]")
+        raise typer.Exit(1) from e
+
+    if status.last_test_passed:
+        console.print(
+            f"[green]✓ autofix 通过[/green]"
+            f"（{status.repair_rounds} 轮修复后 status={status.status}）"
+        )
+    else:
+        console.print(
+            f"[red]× 用完 {max_rounds} 轮仍未通过[/red]"
+            f"（status={status.status}）"
+        )
+    _render_factory_status(status)
+    if status.repair_log:
+        rl_table = Table(title="repair_log")
+        rl_table.add_column("round", style="cyan", justify="right")
+        rl_table.add_column("ts", style="dim")
+        rl_table.add_column("prev_tail", overflow="fold")
+        for entry in status.repair_log:
+            rl_table.add_row(
+                str(entry.get("round", "?")),
+                time.strftime("%H:%M:%S", time.localtime(entry.get("ts", 0))),
+                (entry.get("prev_test_output_tail") or "")[-200:],
+            )
+        console.print(rl_table)
+    if status.last_test_output:
+        console.print(
+            Panel(
+                status.last_test_output,
+                title="最后一次 pytest 输出",
+                border_style="dim",
+            ),
+        )
 
 
 @tool_app.command("status")

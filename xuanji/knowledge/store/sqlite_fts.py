@@ -320,6 +320,38 @@ class SqliteKnowledgeStore:
             rows = conn.execute(sql, params).fetchall()
         return [self._row_to_symbol(r) for r in rows]
 
+    def search_symbols_by_prefix(
+        self,
+        prefix: str,
+        *,
+        namespaces: list[Namespace] | None = None,
+        kinds: list[str] | None = None,
+        limit: int = 30,
+    ) -> list[Symbol]:
+        """前缀搜索 symbol——给 IDE 内联补全用。
+
+        - 大小写不敏感（COLLATE NOCASE）
+        - 结果按 name 字典序，相同 name 长度短的优先
+        - prefix 为空字符串时返回空列表，避免误打全表
+        """
+        if not prefix:
+            return []
+        with self._connect() as conn:
+            sql = "SELECT * FROM symbols WHERE name LIKE ? COLLATE NOCASE"
+            params: list[Any] = [f"{prefix}%"]
+            if namespaces:
+                placeholders = ",".join("?" * len(namespaces))
+                sql += f" AND namespace IN ({placeholders})"
+                params.extend(namespaces)
+            if kinds:
+                placeholders = ",".join("?" * len(kinds))
+                sql += f" AND kind IN ({placeholders})"
+                params.extend(kinds)
+            sql += " ORDER BY length(name) ASC, name ASC LIMIT ?"
+            params.append(int(limit))
+            rows = conn.execute(sql, params).fetchall()
+        return [self._row_to_symbol(r) for r in rows]
+
     def list_sources(self) -> list[Source]:
         with self._connect() as conn:
             rows = conn.execute(

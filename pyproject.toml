@@ -1,6 +1,6 @@
 [project]
 name = "xuanji-fivem"
-version = "1.0.1"
+version = "1.2.0"
 description = "玄玑 · FiveM 智能体内核 — QBCore/QBox/ESX/OX 全家桶开发与服务器运维双轮驱动"
 readme = "README.md"
 requires-python = ">=3.12"

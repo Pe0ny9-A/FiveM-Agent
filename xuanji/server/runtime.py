@@ -71,9 +71,12 @@ class ServerRuntime:
         attach_vector_index: bool = True,
         project_root: Path | None = None,
         vector_backend: str | None = None,
+        seed_knowledge: bool = True,
     ) -> None:
         self.cfg_store = cfg_store or ConfigStore()
         self.knowledge = SqliteKnowledgeStore(knowledge_db_path())
+        if seed_knowledge:
+            self._ensure_knowledge_seed()
         self.memory = SqliteMemoryStore(memory_db_path())
         if attach_vector_index:
             embedder = HashingEmbedder()
@@ -106,6 +109,31 @@ class ServerRuntime:
             except ImportError:
                 return InMemoryVectorStore(dim=dim)
         return InMemoryVectorStore(dim=dim)
+
+    def _ensure_knowledge_seed(self) -> None:
+        """空库自动注入种子。
+
+        Why: VS Code 装上插件就要立刻能用 Lua hover / 补全，等用户去 CLI
+        手动 `xuanji knowledge ingest --seed` 太迟了。
+        How to apply: 仅在 stats.symbols == 0 时跑一次，已经 ingest 过的
+        库不会重复写。
+        """
+        try:
+            stats = self.knowledge.stats()
+        except Exception:
+            return
+        if stats.get("symbols", 0) > 0 or stats.get("chunks", 0) > 0:
+            return
+        from xuanji.knowledge.sources import (
+            seed_chunks,
+            seed_sources,
+            seed_symbols,
+        )
+
+        for src in seed_sources():
+            self.knowledge.upsert_source(src)
+        self.knowledge.upsert_symbols(seed_symbols())
+        self.knowledge.upsert_chunks(seed_chunks())
 
     def build_registry(self) -> ToolRegistry:
         """构造跟 CLI chat loop 一致的工具注册表。"""

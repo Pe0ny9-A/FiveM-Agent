@@ -17,6 +17,10 @@ NS_OX_LIB = "fivem.ox_lib@3.x"
 NS_OX_INVENTORY = "fivem.ox_inventory@2.x"
 NS_FIVEM_CFX = "fivem.cfx@latest"
 NS_NPC_AI = "fivem.npc_ai@1.x"
+NS_QBOX = "fivem.qbox@main"
+NS_ESX = "fivem.esx@1.13"
+NS_OXMYSQL = "fivem.oxmysql@2.x"
+NS_NATIVES = "fivem.natives@latest"
 
 
 def seed_sources() -> list[Source]:
@@ -55,6 +59,34 @@ def seed_sources() -> list[Source]:
             url="https://docs.fivem.net/natives/?_PED",
             version="1.x",
             metadata={"kind": "patterns", "lang": "lua", "topic": "npc_ai"},
+        ),
+        Source(
+            namespace=NS_QBOX,
+            title="QBox（QBCore 现代分支）速查",
+            url="https://docs.qbox.re/",
+            version="main",
+            metadata={"kind": "framework", "lang": "lua", "based_on": "qbcore"},
+        ),
+        Source(
+            namespace=NS_ESX,
+            title="ESX Legacy 速查",
+            url="https://documentation.esx-framework.org/",
+            version="1.13",
+            metadata={"kind": "framework", "lang": "lua"},
+        ),
+        Source(
+            namespace=NS_OXMYSQL,
+            title="oxmysql 速查",
+            url="https://overextended.dev/oxmysql",
+            version="2.x",
+            metadata={"kind": "database", "lang": "lua"},
+        ),
+        Source(
+            namespace=NS_NATIVES,
+            title="FiveM Natives 高频速查",
+            url="https://docs.fivem.net/natives/",
+            version="latest",
+            metadata={"kind": "platform", "lang": "lua"},
         ),
     ]
 
@@ -592,6 +624,361 @@ def seed_symbols() -> list[Symbol]:
                 "end"
             ),
         ),
+        # ---------- QBox（QBCore 现代分支） ----------
+        Symbol(
+            id=f"{NS_QBOX}::exports.qbx_core:GetPlayer",
+            namespace=NS_QBOX,
+            name="exports.qbx_core:GetPlayer",
+            kind="export",
+            side="server",
+            signature="exports.qbx_core:GetPlayer(source) -> Player",
+            summary=(
+                "QBox 等价于 QBCore.Functions.GetPlayer，但只走 export，"
+                "没有全局 QBCore 对象。Player 结构与 QBCore 兼容。"
+            ),
+            example=(
+                "local Player = exports.qbx_core:GetPlayer(source)\n"
+                "if not Player then return end\n"
+                "exports.ox_inventory:RemoveItem(source, 'water', 1)"
+            ),
+        ),
+        Symbol(
+            id=f"{NS_QBOX}::exports.qbx_core:Notify",
+            namespace=NS_QBOX,
+            name="exports.qbx_core:Notify",
+            kind="export",
+            side="any",
+            signature="exports.qbx_core:Notify(text, type, length)",
+            summary=(
+                "QBox 通知。客户端直接调；服务端可 TriggerClientEvent。"
+                "底层依赖 ox_lib 的 lib.notify，所以参数兼容也兼容 ox_lib 风格。"
+            ),
+        ),
+        Symbol(
+            id=f"{NS_QBOX}::exports.qbx_core:CreateUseableItem",
+            namespace=NS_QBOX,
+            name="exports.qbx_core:CreateUseableItem",
+            kind="export",
+            side="server",
+            signature="exports.qbx_core:CreateUseableItem(itemName, callback)",
+            summary=(
+                "QBox 注册可使用物品。**用 ox_inventory 时不需要这个**——"
+                "在 ox_inventory/data/items.lua 给物品配 server.export 即可。"
+                "本 export 只在 QBox 配合 qb-inventory 时才用。"
+            ),
+        ),
+        Symbol(
+            id=f"{NS_QBOX}::exports.qbx_core:GetPlayerCharInfo",
+            namespace=NS_QBOX,
+            name="exports.qbx_core:GetPlayerCharInfo",
+            kind="export",
+            side="server",
+            signature="exports.qbx_core:GetPlayerCharInfo(source) -> table",
+            summary="只取 charinfo（姓名/出生日期/性别/电话/账户），比 GetPlayer 轻。",
+        ),
+        # ---------- ESX Legacy ----------
+        Symbol(
+            id=f"{NS_ESX}::ESX.GetPlayerFromId",
+            namespace=NS_ESX,
+            name="ESX.GetPlayerFromId",
+            kind="function",
+            side="server",
+            signature="ESX.GetPlayerFromId(source) -> xPlayer",
+            summary=(
+                "ESX 服务端通过 source 取 xPlayer 对象，含 identifier / job / "
+                "money / accounts / inventory（旧版）等字段与方法集合。"
+            ),
+            example=(
+                "RegisterNetEvent('myresource:server:UseItem', function()\n"
+                "    local src = source\n"
+                "    local xPlayer = ESX.GetPlayerFromId(src)\n"
+                "    if not xPlayer then return end\n"
+                "    xPlayer.removeInventoryItem('water', 1)\n"
+                "end)"
+            ),
+        ),
+        Symbol(
+            id=f"{NS_ESX}::ESX.RegisterUsableItem",
+            namespace=NS_ESX,
+            name="ESX.RegisterUsableItem",
+            kind="function",
+            side="server",
+            signature="ESX.RegisterUsableItem(item, callback)",
+            summary=(
+                "ESX 把物品注册为可使用——QBCore.Functions.CreateUseableItem 的 ESX 等价。"
+                "用 ox_inventory 替代 ESX 默认背包时不需要这个。"
+            ),
+            example=(
+                "ESX.RegisterUsableItem('water', function(source)\n"
+                "    local xPlayer = ESX.GetPlayerFromId(source)\n"
+                "    if not xPlayer then return end\n"
+                "    xPlayer.removeInventoryItem('water', 1)\n"
+                "    TriggerClientEvent('consumables:client:Drink', source)\n"
+                "end)"
+            ),
+        ),
+        Symbol(
+            id=f"{NS_ESX}::xPlayer.addMoney",
+            namespace=NS_ESX,
+            name="xPlayer.addMoney",
+            kind="function",
+            side="server",
+            signature="xPlayer.addMoney(amount)",
+            summary="给 xPlayer 加现金（money 账户）。返回 nil；底层会推送 setAccountMoney 事件。",
+        ),
+        Symbol(
+            id=f"{NS_ESX}::xPlayer.addAccountMoney",
+            namespace=NS_ESX,
+            name="xPlayer.addAccountMoney",
+            kind="function",
+            side="server",
+            signature="xPlayer.addAccountMoney(account, amount)",
+            summary=(
+                "给指定账户加钱：'money' / 'bank' / 'black_money'。"
+                "addMoney 是 'money' 的快捷方式。"
+            ),
+        ),
+        Symbol(
+            id=f"{NS_ESX}::ESX.RegisterServerCallback",
+            namespace=NS_ESX,
+            name="ESX.RegisterServerCallback",
+            kind="function",
+            side="server",
+            signature="ESX.RegisterServerCallback(name, fn)",
+            summary=(
+                "ESX 旧式 callback。客户端用 ESX.TriggerServerCallback(name, cb, ...) 调。"
+                "新代码推荐改用 ox_lib 的 lib.callback——签名更简洁、超时友好。"
+            ),
+            example=(
+                "ESX.RegisterServerCallback('myres:getMoney', function(source, cb)\n"
+                "    local xPlayer = ESX.GetPlayerFromId(source)\n"
+                "    cb(xPlayer and xPlayer.getMoney() or 0)\n"
+                "end)"
+            ),
+        ),
+        Symbol(
+            id=f"{NS_ESX}::ESX.ShowNotification",
+            namespace=NS_ESX,
+            name="ESX.ShowNotification",
+            kind="function",
+            side="client",
+            signature="ESX.ShowNotification(msg, type, length)",
+            summary=(
+                "ESX 默认通知。type 是字符串如 'success'/'error'/'info'。"
+                "现代项目通常切到 lib.notify 或 ox_lib，看着更现代。"
+            ),
+        ),
+        # ---------- oxmysql ----------
+        Symbol(
+            id=f"{NS_OXMYSQL}::MySQL.query",
+            namespace=NS_OXMYSQL,
+            name="MySQL.query",
+            kind="function",
+            side="server",
+            signature="MySQL.query(query, params?, cb?) -> rows | nil",
+            summary=(
+                "执行 SELECT，返回行数组。在协程里直接用返回值（同步式），"
+                "外部调用传 cb 也可。**永远用 ? 占位符**，不要字符串拼接 SQL。"
+            ),
+            params=[
+                {"name": "query", "type": "string", "desc": "SQL，必含 ? 占位符"},
+                {"name": "params", "type": "table?", "desc": "占位符值数组"},
+                {"name": "cb", "type": "function?", "desc": "异步回调，省略则同步"},
+            ],
+            example=(
+                "local rows = MySQL.query.await(\n"
+                "    'SELECT citizenid, charinfo FROM players WHERE license = ?',\n"
+                "    { license },\n"
+                ")\n"
+                "for _, r in ipairs(rows) do print(r.citizenid) end"
+            ),
+        ),
+        Symbol(
+            id=f"{NS_OXMYSQL}::MySQL.single",
+            namespace=NS_OXMYSQL,
+            name="MySQL.single",
+            kind="function",
+            side="server",
+            signature="MySQL.single(query, params?, cb?) -> row | nil",
+            summary="只取第一行；查不到返回 nil。配合 LIMIT 1 用。",
+        ),
+        Symbol(
+            id=f"{NS_OXMYSQL}::MySQL.scalar",
+            namespace=NS_OXMYSQL,
+            name="MySQL.scalar",
+            kind="function",
+            side="server",
+            signature="MySQL.scalar(query, params?, cb?) -> value | nil",
+            summary="只取第一行第一列。常用 SELECT COUNT(*) / 单字段查询。",
+        ),
+        Symbol(
+            id=f"{NS_OXMYSQL}::MySQL.update",
+            namespace=NS_OXMYSQL,
+            name="MySQL.update",
+            kind="function",
+            side="server",
+            signature="MySQL.update(query, params?, cb?) -> affectedRows",
+            summary="UPDATE / DELETE 都走它，返回受影响行数。",
+        ),
+        Symbol(
+            id=f"{NS_OXMYSQL}::MySQL.insert",
+            namespace=NS_OXMYSQL,
+            name="MySQL.insert",
+            kind="function",
+            side="server",
+            signature="MySQL.insert(query, params?, cb?) -> insertId",
+            summary="INSERT，返回新行 AUTO_INCREMENT id。",
+        ),
+        Symbol(
+            id=f"{NS_OXMYSQL}::MySQL.transaction",
+            namespace=NS_OXMYSQL,
+            name="MySQL.transaction",
+            kind="function",
+            side="server",
+            signature="MySQL.transaction(queries, cb?) -> success",
+            summary=(
+                "批量原子事务。queries 是 {{query, params}, ...}。"
+                "任何一条失败整组回滚，cb(true|false)。"
+            ),
+            example=(
+                "MySQL.transaction({\n"
+                "    {'UPDATE players SET money = money - ? WHERE citizenid = ?', { 100, src_cid }},\n"
+                "    {'UPDATE players SET money = money + ? WHERE citizenid = ?', { 100, dst_cid }},\n"
+                "}, function(success) print(success) end)"
+            ),
+        ),
+        # ---------- FiveM Natives 高频 ----------
+        Symbol(
+            id=f"{NS_NATIVES}::PlayerPedId",
+            namespace=NS_NATIVES,
+            name="PlayerPedId",
+            kind="native",
+            side="client",
+            signature="PlayerPedId() -> Ped",
+            summary=(
+                "返回当前玩家控制的 ped（角色切换时会变）。"
+                "比 GetPlayerPed(-1) 快——能用 PlayerPedId 就别用 GetPlayerPed。"
+            ),
+        ),
+        Symbol(
+            id=f"{NS_NATIVES}::GetEntityCoords",
+            namespace=NS_NATIVES,
+            name="GetEntityCoords",
+            kind="native",
+            side="client",
+            signature="GetEntityCoords(entity, alive?) -> vector3",
+            summary=(
+                "取实体世界坐标。alive=true 会跳过已死亡实体的位置缓存。"
+                "Lua 5.4 下返回 vector3，可直接 #(a - b) 求距离。"
+            ),
+        ),
+        Symbol(
+            id=f"{NS_NATIVES}::SetEntityCoords",
+            namespace=NS_NATIVES,
+            name="SetEntityCoords",
+            kind="native",
+            side="client",
+            signature="SetEntityCoords(entity, x, y, z, xAxis, yAxis, zAxis, clearArea)",
+            summary=(
+                "瞬移实体到坐标。clearArea=true 会清掉目标点周围的车辆/ped。"
+                "传送玩家通常先 FreezeEntityPosition true、传送、等碰撞 ready 再 unfreeze。"
+            ),
+        ),
+        Symbol(
+            id=f"{NS_NATIVES}::IsControlJustPressed",
+            namespace=NS_NATIVES,
+            name="IsControlJustPressed",
+            kind="native",
+            side="client",
+            signature="IsControlJustPressed(inputGroup, control) -> bool",
+            summary=(
+                "本帧首次按下时为 true。inputGroup 通常 0；control 见 fivem 控制 id 表。"
+                "持续按住请用 IsControlPressed；松开瞬间用 IsControlJustReleased。"
+            ),
+            example=(
+                "if IsControlJustPressed(0, 38) then  -- E\n"
+                "    -- 触发交互\n"
+                "end"
+            ),
+        ),
+        Symbol(
+            id=f"{NS_NATIVES}::TriggerEvent",
+            namespace=NS_NATIVES,
+            name="TriggerEvent",
+            kind="native",
+            side="any",
+            signature="TriggerEvent(eventName, ...)",
+            summary="**本端**触发事件——客户端发给本机、服务端发给本进程。跨端用 TriggerServerEvent / TriggerClientEvent。",
+        ),
+        Symbol(
+            id=f"{NS_NATIVES}::TriggerServerEvent",
+            namespace=NS_NATIVES,
+            name="TriggerServerEvent",
+            kind="native",
+            side="client",
+            signature="TriggerServerEvent(eventName, ...)",
+            summary="客户端→服务端事件。**任何敏感操作必须服务端校验**，client 端可被注入。",
+        ),
+        Symbol(
+            id=f"{NS_NATIVES}::TriggerClientEvent",
+            namespace=NS_NATIVES,
+            name="TriggerClientEvent",
+            kind="native",
+            side="server",
+            signature="TriggerClientEvent(eventName, source | -1, ...)",
+            summary="服务端→客户端。source=-1 广播给所有玩家；写 server id 单播。",
+        ),
+        Symbol(
+            id=f"{NS_NATIVES}::RegisterNetEvent",
+            namespace=NS_NATIVES,
+            name="RegisterNetEvent",
+            kind="native",
+            side="any",
+            signature="RegisterNetEvent(eventName, handler?)",
+            summary=(
+                "把一个事件注册为可被网络触发的——必须，否则 TriggerClientEvent / "
+                "TriggerServerEvent 收不到。新版 API 接受第二参直接传 handler，"
+                "等价于额外 AddEventHandler。"
+            ),
+            example=(
+                "RegisterNetEvent('myres:client:notify', function(text)\n"
+                "    lib.notify({ description = text })\n"
+                "end)"
+            ),
+        ),
+        Symbol(
+            id=f"{NS_NATIVES}::CreateThread",
+            namespace=NS_NATIVES,
+            name="CreateThread",
+            kind="native",
+            side="any",
+            signature="CreateThread(fn)",
+            summary=(
+                "起一个独立 Lua 协程。比 Citizen.CreateThread 短。"
+                "协程内 Wait(ms) 让出 CPU，0 也算让出（下一帧继续）。"
+            ),
+        ),
+        Symbol(
+            id=f"{NS_NATIVES}::SetTimeout",
+            namespace=NS_NATIVES,
+            name="SetTimeout",
+            kind="native",
+            side="any",
+            signature="SetTimeout(ms, fn)",
+            summary="ms 毫秒后跑一次 fn。需要重复用 CreateThread + Wait 循环。",
+        ),
+        Symbol(
+            id=f"{NS_NATIVES}::Wait",
+            namespace=NS_NATIVES,
+            name="Wait",
+            kind="native",
+            side="any",
+            signature="Wait(ms)",
+            summary=(
+                "在协程里阻塞 ms 毫秒。**只能在 CreateThread/RegisterNetEvent handler 里用**，"
+                "纯 Lua 顶层调会卡死服务器。轮询循环至少 Wait(0)，避免吃满 CPU。"
+            ),
+        ),
     ]
 
 
@@ -731,6 +1118,130 @@ def seed_chunks() -> list[Chunk]:
                 "数据持久化走 server event。这样：(1) 不占网络对象槽位；(2) 没有 owner 转移问题；"
                 "(3) 玩家断线/进出区域不影响其他人。需要全局唯一（如 boss NPC）才用 networked，"
                 "并配合 NetworkRegisterEntityAsNetworked + 服务端 ESX/QB 的 NPC 同步资源。"
+            ),
+        ),
+        # ---------- QBox / ESX 框架对照 ----------
+        Chunk(
+            id=f"{NS_QBOX}:concepts/migration-from-qbcore#0",
+            namespace=NS_QBOX,
+            source_title="QBox（QBCore 现代分支）速查",
+            section="QBCore → QBox 迁移要点",
+            text=(
+                "QBox 是 QBCore 的现代化分支，移除全局 QBCore 对象，全部走 export："
+                "QBCore.Functions.GetPlayer(src) → exports.qbx_core:GetPlayer(src)。"
+                "默认强依赖 ox_lib + ox_inventory + ox_target，"
+                "不再维护 qb-inventory / qb-target 路径。物品操作建议直接走 "
+                "exports.ox_inventory:AddItem / RemoveItem，**不要**再用 "
+                "Player.Functions.AddItem，那个 shim 在新版可能不再保留。"
+                "Player 对象结构与 QBCore 兼容，charinfo / money / job / metadata 字段不变。"
+            ),
+        ),
+        Chunk(
+            id=f"{NS_QBOX}:concepts/which-framework-to-pick#0",
+            namespace=NS_QBOX,
+            source_title="QBox（QBCore 现代分支）速查",
+            section="新项目选 QBCore / QBox / ESX 怎么选",
+            text=(
+                "2026 年新项目推荐顺序：QBox（最现代、ox 全家桶原生集成）> "
+                "QBCore（生态最大、教程多、但要自己拼 ox 替换）> "
+                "ESX Legacy（老项目维护用，新项目除非有强 ESX 依赖资源否则不推荐）。"
+                "从 ESX 迁 QBox 改动最大（API 完全不同）；"
+                "从 QBCore 迁 QBox 改动中等（语法换 export 但语义兼容）；"
+                "从 QBCore 迁 ESX 反向迁移几乎没人做，因为 QBCore 设计本身就是 ESX 升级。"
+            ),
+        ),
+        Chunk(
+            id=f"{NS_ESX}:concepts/xplayer-vs-qbcore-player#0",
+            namespace=NS_ESX,
+            source_title="ESX Legacy 速查",
+            section="xPlayer 与 QBCore Player 的字段对照",
+            text=(
+                "ESX 的 xPlayer 与 QBCore 的 Player 在结构上对照大致："
+                "xPlayer.identifier ↔ Player.PlayerData.citizenid；"
+                "xPlayer.getMoney() ↔ Player.PlayerData.money.cash；"
+                "xPlayer.getAccount('bank') ↔ Player.PlayerData.money.bank；"
+                "xPlayer.job ↔ Player.PlayerData.job；"
+                "xPlayer.addInventoryItem(item, qty) ↔ Player.Functions.AddItem(item, qty)。"
+                "ESX 的 set 路径偏函数式（addMoney / removeMoney），"
+                "QBCore 偏对象式（Player.Functions.AddMoney(...))。"
+                "两个体系都支持用 ox_inventory 替代默认背包；切到 ox 后这些 inventory API "
+                "都不再用，统一走 exports.ox_inventory:AddItem。"
+            ),
+        ),
+        # ---------- oxmysql ----------
+        Chunk(
+            id=f"{NS_OXMYSQL}:concepts/usage-patterns#0",
+            namespace=NS_OXMYSQL,
+            source_title="oxmysql 速查",
+            section="使用模式：同步 / 异步 / 事务",
+            text=(
+                "oxmysql 在 server 端用，提供四种方法：query/single/scalar/update + insert + transaction。"
+                "每个方法有三种调用方式：(a) MySQL.query.await(...) 在协程里同步等结果，"
+                "返回值直接拿——**最常用、可读性最好**；"
+                "(b) MySQL.query(sql, params, cb) 异步回调；"
+                "(c) MySQL.query(sql, params) 不等结果（fire-and-forget）。"
+                "**永远用 ? 占位符**，不要字符串拼接 SQL——会被注入。"
+                "transaction 用于多语句原子操作（转账、扣费 + 加道具一起做），"
+                "任何一条失败整组回滚。"
+            ),
+        ),
+        Chunk(
+            id=f"{NS_OXMYSQL}:concepts/migrate-from-ghmattisql#0",
+            namespace=NS_OXMYSQL,
+            source_title="oxmysql 速查",
+            section="从 ghmattimysql / mysql-async 迁移",
+            text=(
+                "老项目常用 ghmattimysql 或 mysql-async，迁到 oxmysql 时："
+                "MySQL.Sync.fetchAll → MySQL.query.await；"
+                "MySQL.Sync.fetchScalar → MySQL.scalar.await；"
+                "MySQL.Sync.execute → MySQL.update.await；"
+                "MySQL.Async.* 系列等价改成 cb 形式或 .await。"
+                "oxmysql 的占位符习惯是 ?，命名占位符 :name 也支持但不推荐"
+                "（旧代码兼容用，新代码全用 ?）。"
+            ),
+        ),
+        # ---------- FiveM Natives ----------
+        Chunk(
+            id=f"{NS_NATIVES}:concepts/event-flow#0",
+            namespace=NS_NATIVES,
+            source_title="FiveM Natives 高频速查",
+            section="事件流：本端 / 跨端 / Net 注册",
+            text=(
+                "FiveM 事件三件套：(1) AddEventHandler 监听**本端**事件；"
+                "(2) RegisterNetEvent 把事件名标记为可被网络触发——"
+                "**没注册过的事件名**用 TriggerClientEvent / TriggerServerEvent 收不到；"
+                "(3) TriggerEvent 仅触发本端，TriggerServerEvent / TriggerClientEvent 跨端。"
+                "**安全铁律**：客户端可被注入，所以服务端收 client→server 事件后**必须**重新校验 "
+                "玩家身份、距离、物品库存，不要信客户端传来的任何敏感数据（金额、目标 source 等）。"
+                "新版 FiveM 允许 RegisterNetEvent('name', handler) 直接传第二参作为 handler，"
+                "省一行 AddEventHandler。"
+            ),
+        ),
+        Chunk(
+            id=f"{NS_NATIVES}:concepts/threading-and-wait#0",
+            namespace=NS_NATIVES,
+            source_title="FiveM Natives 高频速查",
+            section="协程、Wait 与轮询",
+            text=(
+                "FiveM 的 Lua 是协程式：每个 CreateThread 创建一个独立协程，"
+                "Wait(ms) 让出 CPU 给主帧。**绝不能**在协程外（顶层 Lua）调 Wait——"
+                "服务器会卡死整帧。轮询循环至少 Wait(0) 让出帧，"
+                "事件驱动的逻辑根本不需要 thread；只有真正要持续 tick（巡逻、距离检测）"
+                "才用 CreateThread。能用 SetTimeout 一次性回调就别用 thread+循环。"
+                "客户端 60FPS 主循环，服务端 50ms tick——心里有数。"
+            ),
+        ),
+        Chunk(
+            id=f"{NS_NATIVES}:concepts/coords-and-vectors#0",
+            namespace=NS_NATIVES,
+            source_title="FiveM Natives 高频速查",
+            section="坐标与向量",
+            text=(
+                "Lua 5.4（lua54 'yes'）下 GetEntityCoords 返回 vector3（不是 table），"
+                "可以直接 v.x v.y v.z 访问，**距离用 #(a - b)**——比 #vec3(a-b) 或 "
+                "Vdist 都快。vec3(x,y,z) 字面量也能用。"
+                "没启 lua54 时返回的是 {x,y,z} 的 table——必须 GetEntityCoords(ped, true) "
+                "再 .x / .y / .z 访问。新项目都开 lua54 'yes'，省心。"
             ),
         ),
     ]

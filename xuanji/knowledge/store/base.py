@@ -52,6 +52,15 @@ class KnowledgeStore(Protocol):
         namespaces: list[Namespace] | None = None,
     ) -> list[Symbol]: ...
 
+    def search_symbols_by_prefix(
+        self,
+        prefix: str,
+        *,
+        namespaces: list[Namespace] | None = None,
+        kinds: list[str] | None = None,
+        limit: int = 30,
+    ) -> list[Symbol]: ...
+
     def list_sources(self) -> list[Source]: ...
 
     def list_namespaces(self) -> list[Namespace]: ...
