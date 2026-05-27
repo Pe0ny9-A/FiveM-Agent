@@ -5,10 +5,7 @@
 - 请求（有 id）→ 必须回响应；通知（无 id）→ 不回，仅记录。
 - 异常一律转 JSON-RPC 错误对象，不让 server 因单条消息崩掉。
 - shutdown 通知或 stdin EOF → 干净退出。
-
-不做的事：
-- 不做服务端推流（VS Code 端 P1 阶段不需要 LSP $/progress；P2 再加）
-- 不做并发请求（单 client 单线程，串行处理足够；并发以后用 asyncio.gather 打开）
+- 服务端可主动推流（LSP $/progress 风格通知），由 Notifier 串行化。
 """
 
 from __future__ import annotations
@@ -16,6 +13,7 @@ from __future__ import annotations
 import asyncio
 import sys
 import traceback
+from collections.abc import Callable
 from typing import Any, BinaryIO
 
 from xuanji.ipc.dispatcher import RpcMethod, dispatch
@@ -26,6 +24,7 @@ from xuanji.ipc.errors import (
     RpcError,
 )
 from xuanji.ipc.framing import read_message, write_message
+from xuanji.ipc.notifier import Notifier, StdoutNotifier
 
 
 def _err_response(
@@ -96,17 +95,34 @@ async def _handle_one(
     return _ok_response(request_id, result)
 
 
+# 类型：方法表工厂——拿到 notifier 才能注册带推流能力的方法（chat.* / council.*）
+DispatcherFactory = Callable[[Notifier], dict[str, RpcMethod]]
+
+
 async def run_stdio_server(
-    methods: dict[str, RpcMethod],
+    methods_or_factory: dict[str, RpcMethod] | DispatcherFactory,
     *,
     stdin: BinaryIO | None = None,
     stdout: BinaryIO | None = None,
     stderr: BinaryIO | None = None,
+    notifier: Notifier | None = None,
 ) -> None:
-    """跑主循环——直到 stdin EOF 或收到 shutdown 通知。"""
+    """跑主循环——直到 stdin EOF 或收到 shutdown 通知。
+
+    第一个参数兼容两种形态：
+    - dict[str, RpcMethod]：现成的方法表，注入空的 Notifier
+    - DispatcherFactory：传 Notifier 进去得到方法表，启用服务端推流
+    """
     in_stream = stdin or sys.stdin.buffer
     out_stream = stdout or sys.stdout.buffer
     err_stream = stderr or sys.stderr.buffer
+
+    notif = notifier or StdoutNotifier(out_stream)
+    methods = (
+        methods_or_factory(notif)
+        if callable(methods_or_factory)
+        else methods_or_factory
+    )
 
     err_stream.write(b"[ipc] xuanji stdio server ready\n")
     err_stream.flush()
@@ -142,4 +158,4 @@ async def run_stdio_server(
                 break
 
 
-__all__ = ["run_stdio_server"]
+__all__ = ["DispatcherFactory", "run_stdio_server"]

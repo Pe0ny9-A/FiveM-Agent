@@ -257,17 +257,18 @@ def _do_init(
 
 @app.command()
 def init(
-    name: str = typer.Option(
-        "default", "--name", "-n", help="profile 名（短标识）"
+    name: str | None = typer.Option(
+        None, "--name", "-n", help="profile 名（短标识）；不传走交互向导",
     ),
-    kind: ProfileKind = typer.Option(
-        ProfileKind.ANTHROPIC, "--kind", "-k",
-        help="provider 种类（anthropic/openai/deepseek/openai-compatible）",
+    kind: ProfileKind | None = typer.Option(
+        None, "--kind", "-k",
+        help="provider 种类（anthropic/openai/deepseek/openai-compatible）；不传走交互向导",
     ),
-    api_key: str = typer.Option(
-        ..., "--api-key", prompt="API Key", hide_input=True,
+    api_key: str | None = typer.Option(
+        None, "--api-key",
+        help="API Key；不传走交互向导（hidden 输入）",
     ),
-    base_url: str = typer.Option(
+    base_url: str | None = typer.Option(
         None, "--base-url", "-u",
         help="openai-compatible 必填",
     ),
@@ -280,7 +281,11 @@ def init(
         help="跳过 profile 实际请求测试",
     ),
 ) -> None:
-    """首次使用向导：建 profile + 导入种子 + 测试连接。"""
+    """首次使用向导：建 profile + 导入种子 + 测试连接。
+
+    无参数运行时进入交互向导，逐项选 provider / 模型 / API Key；
+    全部通过 flag 传入时走非交互快路径（便于脚本与 CI）。
+    """
     console.print(
         Panel(
             "玄玑首次使用向导\n"
@@ -290,12 +295,99 @@ def init(
             title="[magenta]玄玑 init[/magenta]",
         )
     )
+
+    if kind is None:
+        name, kind, api_key, base_url = _init_wizard(
+            name_hint=name, base_url_hint=base_url,
+        )
+    else:
+        if name is None:
+            name = "default"
+        if api_key is None:
+            api_key = typer.prompt("API Key", hide_input=True)
+
     _do_init(name, kind, api_key, base_url, seed_knowledge, skip_test)
     console.print(
         "[green]姐姐这边都准备好了。[/green]\n"
         "[dim]下一步：[bold]xuanji chat[/bold] 进入对话，"
         "或 [bold]xuanji doctor[/bold] 再做一次环境自检。[/dim]"
     )
+
+
+_WIZARD_OPTIONS: list[tuple[str, ProfileKind, str]] = [
+    ("Claude", ProfileKind.ANTHROPIC, "Anthropic 官方端点"),
+    ("GPT", ProfileKind.OPENAI, "OpenAI 官方端点"),
+    ("DeepSeek", ProfileKind.DEEPSEEK, "DeepSeek 官方端点（0.9.3 默认偏好）"),
+    ("自定义 Base URL", ProfileKind.OPENAI_COMPATIBLE,
+     "OneAPI / Ollama / Kimi / 智谱 / 火山方舟 / 其他 OpenAI 兼容端点"),
+]
+
+
+def _init_wizard(
+    *, name_hint: str | None, base_url_hint: str | None,
+) -> tuple[str, ProfileKind, str, str | None]:
+    """交互式向导：返回 (profile_name, kind, api_key, base_url)。
+
+    UI 格式参考 Claude Code 的 init 向导，rich 表格 + typer.prompt 数字选择。
+    """
+    table = Table(
+        title="选一个 provider",
+        show_lines=False,
+        title_style="bold magenta",
+    )
+    table.add_column("#", style="cyan", no_wrap=True, width=3)
+    table.add_column("名称", style="bold", no_wrap=True)
+    table.add_column("默认模型", style="green", no_wrap=True)
+    table.add_column("说明", style="dim")
+    for idx, (label, k, desc) in enumerate(_WIZARD_OPTIONS, 1):
+        table.add_row(str(idx), label, DEFAULT_MODELS[k], desc)
+    console.print(table)
+
+    choice = typer.prompt(
+        "请输入序号（默认 3，姐姐推荐 DeepSeek）",
+        default="3",
+    ).strip()
+    try:
+        n = int(choice)
+        if not 1 <= n <= len(_WIZARD_OPTIONS):
+            raise ValueError
+    except ValueError as exc:
+        console.print(f"[red]无效序号：{choice}[/red]")
+        raise typer.Exit(1) from exc
+
+    label, kind, _ = _WIZARD_OPTIONS[n - 1]
+
+    default_name = name_hint or {
+        ProfileKind.ANTHROPIC: "claude",
+        ProfileKind.OPENAI: "gpt",
+        ProfileKind.DEEPSEEK: "deepseek",
+        ProfileKind.OPENAI_COMPATIBLE: "custom",
+    }[kind]
+    profile_name = typer.prompt("profile 名（短标识）", default=default_name).strip()
+    if not profile_name:
+        console.print("[red]profile 名不能为空[/red]")
+        raise typer.Exit(1)
+
+    base_url: str | None = None
+    if kind == ProfileKind.OPENAI_COMPATIBLE:
+        base_url = typer.prompt(
+            "Base URL（如 https://oneapi.example.com/v1）",
+            default=base_url_hint or "",
+        ).strip()
+        if not base_url:
+            console.print("[red]Base URL 不能为空[/red]")
+            raise typer.Exit(1)
+
+    api_key = typer.prompt(f"{label} API Key", hide_input=True).strip()
+    if not api_key:
+        console.print("[red]API Key 不能为空[/red]")
+        raise typer.Exit(1)
+
+    console.print(
+        f"[dim]→ {label} · profile={profile_name} · "
+        f"model={DEFAULT_MODELS[kind]}{f' · base={base_url}' if base_url else ''}[/dim]"
+    )
+    return profile_name, kind, api_key, base_url
 
 
 # ---------- doctor ----------
@@ -2984,22 +3076,20 @@ def ipc() -> None:
 
     协议：LSP 风格 Content-Length 分帧 + JSON-RPC 2.0。
     日志走 stderr，避免污染 stdout 协议流。
+    服务端可主动推流（chat.* / ensemble.* 通知）。
     """
-    from xuanji.ipc.dispatcher import build_dispatcher
+    from xuanji.ipc.dispatcher import build_full_dispatcher
+    from xuanji.ipc.notifier import StdoutNotifier
     from xuanji.ipc.server import run_stdio_server
     from xuanji.server.runtime import ServerRuntime
 
     runtime = ServerRuntime()
-    methods = build_dispatcher(
-        knowledge=runtime.knowledge,
-        memory=runtime.memory,
-        scaffold=runtime.scaffold_engine,
-        project_root=runtime.project_root,
-        project_namespace=runtime.project_namespace,
-        cfg_store_factory=ConfigStore,
-        tool_registry_factory=runtime.build_registry,
-    )
-    asyncio.run(run_stdio_server(methods))
+    notifier = StdoutNotifier()
+
+    def _factory(_: object) -> Any:
+        return build_full_dispatcher(runtime=runtime, notifier=notifier)
+
+    asyncio.run(run_stdio_server(_factory, notifier=notifier))
 
 
 # ---------- mcp-serve ----------

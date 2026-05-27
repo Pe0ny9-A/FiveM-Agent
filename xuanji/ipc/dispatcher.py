@@ -8,20 +8,16 @@
 - project.detect                    跑 detector
 - project.analyze                   静态分析一个 resource
 - project.scaffold                  从预设生成 resource
-- presets.list                      所有可用预设
-- presets.drafts                    待 review 的草案
-- presets.show {key}                看草案详情
-- presets.accept {key}              激活草案
-- presets.reject {key}              拒绝草案
-- presets.remove {key}              删除已激活
-- knowledge.search {query, k}       FTS5 / 混合检索
-- knowledge.symbol {name}           精准查 symbol
-- memory.recall {query, k}          召回
-- memory.write {text, ...}          写记忆
-- memory.list {namespace, limit}    列记忆
-- skill.list {limit}                列技能
-- skill.search {query}              搜技能
-- chat.start {profile?}             返回 session_id（流式留 P2）
+- presets.list / drafts / show / accept / reject / remove
+- knowledge.search / symbol
+- memory.recall / write / list / forget
+- skill.list / search / show
+- tools.list / call
+- chat.start / send / cancel / hitl_response / close / list  （流式，需要 notifier）
+- ensemble.council                  议会式群英会（流式，需要 notifier）
+
+chat.* 与 ensemble.* 必须由 build_dispatcher_with_notifier 构造，
+普通 build_dispatcher 不带流式能力（CLI 单测里用足够）。
 """
 
 from __future__ import annotations
@@ -512,6 +508,176 @@ def _xuanji_version() -> str:
     return __version__
 
 
+# ============================================================
+# 带 notifier 的方法表（chat.* / ensemble.*）
+# ============================================================
+
+
+def build_streaming_methods(
+    *,
+    runtime: Any,
+    notifier: Any,
+) -> dict[str, RpcMethod]:
+    """构造需要 notifier 的流式方法（chat.* / ensemble.*）。
+
+    单独拆出来是为了让 build_dispatcher 单测不依赖 ServerRuntime。
+    """
+    from xuanji.ipc.chat_manager import IpcChatManager
+
+    chat = IpcChatManager(runtime=runtime, notifier=notifier)
+
+    async def chat_start(params: dict[str, Any]) -> dict[str, Any]:
+        return await chat.start(
+            profile_name=params.get("profile"),
+            mode=params.get("mode"),
+        )
+
+    async def chat_send(params: dict[str, Any]) -> dict[str, Any]:
+        return await chat.send(
+            session_id=_require(params, "session_id"),
+            text=_require(params, "text"),
+        )
+
+    async def chat_cancel(params: dict[str, Any]) -> dict[str, Any]:
+        return await chat.cancel(session_id=_require(params, "session_id"))
+
+    async def chat_hitl_response(params: dict[str, Any]) -> dict[str, Any]:
+        return await chat.hitl_response(
+            session_id=_require(params, "session_id"),
+            request_id=_require(params, "request_id"),
+            approve=bool(params.get("approve", False)),
+        )
+
+    async def chat_close(params: dict[str, Any]) -> dict[str, Any]:
+        return await chat.close(session_id=_require(params, "session_id"))
+
+    async def chat_list(params: dict[str, Any]) -> dict[str, Any]:
+        return await chat.list_sessions()
+
+    # ---------------- ensemble.* ----------------
+
+    async def ensemble_council(params: dict[str, Any]) -> dict[str, Any]:
+        """跑一次议会，进度通过 notifier 推送 ensemble.* 通知，最终返回 verdict。"""
+        from xuanji.ensemble.council import (
+            CouncilEngine,
+            CouncilorSpec,
+            CouncilSpec,
+            JudgeSpec,
+        )
+
+        question = _require(params, "question")
+        councilors_raw = params.get("councilors") or []
+        if not isinstance(councilors_raw, list) or len(councilors_raw) < 2:
+            raise RpcError(INVALID_PARAMS, "councilors 至少 2 个")
+
+        councilors: list[CouncilorSpec] = []
+        for raw in councilors_raw:
+            if not isinstance(raw, dict):
+                raise RpcError(INVALID_PARAMS, "councilor 必须是 object")
+            try:
+                councilors.append(CouncilorSpec(**raw))
+            except (TypeError, ValueError) as e:
+                raise RpcError(INVALID_PARAMS, f"councilor 参数非法：{e}") from e
+
+        judge_raw = params.get("judge") or {}
+        try:
+            judge_spec = JudgeSpec(**judge_raw)
+        except (TypeError, ValueError) as e:
+            raise RpcError(INVALID_PARAMS, f"judge 参数非法：{e}") from e
+
+        deadline = float(params.get("deadline_seconds", 120.0))
+
+        cfg = runtime.cfg_store.load()
+        if not cfg.profiles:
+            raise RpcError(NOT_INITIALIZED, "没有配置任何 profile")
+        active = cfg.get_active()
+        if active is None:
+            raise RpcError(NOT_INITIALIZED, "没有激活的 profile")
+
+        request_id = params.get("request_id") or ""
+
+        async def on_progress(event: str, payload: dict[str, Any]) -> None:
+            await notifier.notify(
+                f"ensemble.{event}",
+                {"request_id": request_id, **payload},
+            )
+
+        engine = CouncilEngine(
+            profiles=cfg.profiles,
+            default_profile=active,
+            active_profile_name=cfg.active_profile,
+            master_registry=runtime.build_registry(),
+            project_root=runtime.project_root,
+            memory=runtime.memory,
+        )
+        spec = CouncilSpec(
+            question=question,
+            councilors=councilors,
+            judge=judge_spec,
+            deadline_seconds=deadline,
+        )
+        outcome = await engine.convene(spec, on_progress=on_progress)
+        return {
+            "request_id": request_id,
+            "question": outcome.question,
+            "elapsed_seconds": outcome.elapsed_seconds,
+            "memory_id": outcome.memory_id,
+            "councilors": [
+                {
+                    "role": o.role,
+                    "profile_name": o.profile_name,
+                    "model": o.model,
+                    "final_text": o.final_text,
+                    "iterations": o.iterations,
+                    "tool_calls_made": o.tool_calls_made,
+                    "truncated": o.truncated,
+                    "error": o.error,
+                }
+                for o in outcome.councilors
+            ],
+            "verdict": outcome.verdict.model_dump(),
+        }
+
+    return {
+        "chat.start": chat_start,
+        "chat.send": chat_send,
+        "chat.cancel": chat_cancel,
+        "chat.hitl_response": chat_hitl_response,
+        "chat.close": chat_close,
+        "chat.list": chat_list,
+        "ensemble.council": ensemble_council,
+    }
+
+
+def build_full_dispatcher(
+    *,
+    runtime: Any,
+    notifier: Any,
+) -> dict[str, RpcMethod]:
+    """完整方法表（含流式）——VS Code 插件 1.0 起用这个。"""
+    from xuanji.config import ConfigStore, hooks_dir, skills_dir
+    from xuanji.ipc.config_methods import build_config_methods
+
+    methods = build_dispatcher(
+        knowledge=runtime.knowledge,
+        memory=runtime.memory,
+        scaffold=runtime.scaffold_engine,
+        project_root=runtime.project_root,
+        project_namespace=runtime.project_namespace,
+        cfg_store_factory=ConfigStore,
+        tool_registry_factory=runtime.build_registry,
+    )
+    methods.update(build_streaming_methods(runtime=runtime, notifier=notifier))
+    methods.update(
+        build_config_methods(
+            cfg_store_factory=ConfigStore,
+            hooks_dir=hooks_dir(),
+            skills_dir=skills_dir(),
+        ),
+    )
+    return methods
+
+
 # 异步分发（暴露给 server.py 用）
 async def dispatch(
     methods: dict[str, RpcMethod],
@@ -541,5 +707,7 @@ __all__ = [
     "NOT_INITIALIZED",
     "RpcMethod",
     "build_dispatcher",
+    "build_full_dispatcher",
+    "build_streaming_methods",
     "dispatch",
 ]

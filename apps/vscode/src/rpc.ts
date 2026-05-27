@@ -1,5 +1,7 @@
 // LSP 风格 stdio JSON-RPC 客户端。
 // 跟后端 core/ipc/framing.py 严格对齐：Content-Length\r\n\r\n + utf-8 JSON。
+//
+// 双向通道：除了 request/response，还订阅 server-push notification（无 id）。
 
 import { Writable } from "stream";
 
@@ -25,11 +27,17 @@ interface PendingCall {
     reject: (reason: unknown) => void;
 }
 
+type NotificationListener = (
+    method: string,
+    params: Record<string, unknown>,
+) => void;
+
 export class JsonRpcClient {
     private nextId = 1;
     private pending = new Map<number, PendingCall>();
     private buffer = Buffer.alloc(0);
     private closed = false;
+    private notificationListeners = new Set<NotificationListener>();
 
     constructor(private readonly stdin: Writable) {}
 
@@ -65,8 +73,19 @@ export class JsonRpcClient {
         }
     }
 
-    private handleMessage(msg: { id?: number; result?: unknown; error?: RpcError }): void {
+    private handleMessage(msg: {
+        id?: number;
+        method?: string;
+        params?: Record<string, unknown>;
+        result?: unknown;
+        error?: RpcError;
+    }): void {
+        // 没 id 但有 method = server push notification
         if (typeof msg.id !== "number") {
+            if (typeof msg.method === "string") {
+                const params = msg.params || {};
+                this.notificationListeners.forEach((fn) => fn(msg.method!, params));
+            }
             return;
         }
         const pending = this.pending.get(msg.id);
@@ -103,11 +122,17 @@ export class JsonRpcClient {
         });
     }
 
+    onNotification(fn: NotificationListener): () => void {
+        this.notificationListeners.add(fn);
+        return () => this.notificationListeners.delete(fn);
+    }
+
     close(): void {
         this.closed = true;
         for (const pending of this.pending.values()) {
             pending.reject(new Error("RPC 通道已关闭"));
         }
         this.pending.clear();
+        this.notificationListeners.clear();
     }
 }

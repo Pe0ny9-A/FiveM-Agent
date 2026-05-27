@@ -79,8 +79,8 @@ CLI：`xuanji config list / show / add / use / remove / test / path`
 uv sync --extra dev
 
 # 跑静态检查 + 类型检查 + 测试
-uv run ruff check core/
-uv run mypy core/
+uv run ruff check xuanji/ tests/
+uv run mypy xuanji/
 uv run pytest
 
 # 启动玄玑
@@ -90,25 +90,38 @@ uv run xuanji config use <name>  # 切换 profile
 uv run xuanji chat             # 进入对话
 ```
 
-## 当前进度（截至 0.5.0）
+## 当前进度（截至 1.0.0）
 
 - [x] M0 骨架 + 三家 LLM Provider + 配置系统 + 玄玑人设
 - [x] 天枢台 Conductor 多轮 tool loop + reflux + audit
 - [x] 百工坊 + 工造司 InProcSandbox + 司辰阁 GateInterceptor + HITL
-- [x] 稷下学宫 SQLite FTS5 + jieba 中文分词 + 向量混合检索 + 5 套种子
+- [x] 稷下学宫 SQLite FTS5 + jieba 中文分词 + 真 LanceDB 向量混合检索 + 5 套种子
 - [x] 怀玉阁 SQLite 三层 scope × 三类 kind + 衰减 Reflux
 - [x] 0.2 自演化：21 工具（meta/memory/ingest/skill/factory）
 - [x] 0.3 群英会：Supervisor + 3 角色（researcher/coder/reviewer）+ dispatch_subagent
 - [x] 0.3 爬虫：BFS + 增量 + crawl_site 工具（NET → HITL）
 - [x] 0.3 ToolFactory：propose → generate(LLM) → test(subprocess) → publish 四步
 - [x] 0.3 FastAPI 服务：WebSocket 流式聊天 + REST CRUD + WebSocketHITL 桥
-- [x] 0.3 Web 前端：嵌入式单页 HTML（暗色主题 + 工具事件 + HITL 弹卡）
 - [x] 0.3 Tauri 桌面：apps/desktop 配置 + 自启 Python 后端
 - [x] 0.4 FiveM 专精层：detector / analyzer / 6 套 builtin 预设 / 自学习预设
-- [x] **0.5 IPC 子系统**：LSP 风格 stdio JSON-RPC + 22 RPC 方法 + `xuanji ipc` 入口
-- [x] **0.5 VS Code 插件**：apps/vscode 独立插件，状态栏 / 命令面板五件套 / 三栏仪表盘
-- [x] CLI：`info` / `chat` / `serve` / `ipc` / `config` / `knowledge` / `memory` / `skill` / `tool` / `fivem` / `preset`
-- [x] 质量门：ruff/mypy strict/pytest 三件套全绿，**224 单测 / 26 工具**
+- [x] 0.5 IPC 子系统：LSP 风格 stdio JSON-RPC + 22 RPC 方法 + `xuanji ipc` 入口
+- [x] 0.5 VS Code 插件第一版：状态栏 / 命令面板五件套 / 三栏仪表盘
+- [x] 0.8 真 LanceDB + Hooks --explain + 内置示范 skill/hook
+- [x] **1.0 现代化 React 工作台**：Vite + React 18 + Tailwind + Zustand，七栏（对话/群英会/Profiles/Skills/MCP/Hooks/仪表盘）
+- [x] **1.0 多会话流式聊天**：每会话独立 ServerRuntime/Conductor，工具事件可视化 + 文件链接跳转 + Profile 任意切换
+- [x] **1.0 议会式群英会面板**：UUID 关联 ensemble.* 进度，CouncilorRow 自定义角色/profile/brief，VerdictCard 渲染 summary/chosen_path/consensus/divergence/risks
+- [x] **1.0 全家桶可视化配置**：Profiles 切换 / Skills（reload/show/MD 渲染）/ MCP（CRUD + reload）/ Hooks（CRUD + reload + test）
+- [x] **1.0 状态栏增强**：profile · framework/inventory/target · ↑↓token · busy spinner，订阅 chat.* 事件
+- [x] CLI：`info` / `chat` / `serve` / `ipc` / `config` / `knowledge` / `memory` / `skill` / `tool` / `fivem` / `preset` / `hook`
+- [x] 质量门：ruff/mypy strict/pytest 三件套全绿，**509 单测 / 29 工具 / 106 模块**
+
+### 1.0.0 关键设计
+
+**React 工作台 = 纯 IPC**：webview 不直连 LLM，全部能力（聊天 / 议会 / 配置 / 知识 / 记忆）都通过 stdio JSON-RPC 走玄玑后端。LLM 客户端（Claude Code/Codex 等）保持独立，工作台是"工具栏 + 仪表盘 + 议会"的现代外壳。
+
+**多会话 = 多 Conductor**：每个 chat session 起独立的 ServerRuntime 实例（asyncio.Lock 保护），message_id 全程贯通流式 delta / tool 事件 / done。Profile 切换通过 close+start 重建 session、保留前端消息缓存。
+
+**议会进度可视化**：群英会通过 `request_id` 把 ensemble.councilor_started / councilor_done / council_judging / council_done 串成时间线，前端按角色 idx 维护状态格 + 最终 Verdict 卡。
 
 ### 0.5.0 关键设计
 
@@ -147,8 +160,8 @@ cd apps/vscode && pnpm install && pnpm run build  # 然后 F5 启动
 cd apps/desktop && pnpm tauri dev
 
 # 三件套
-uv run ruff check core/ tests/
-uv run mypy core/
+uv run ruff check xuanji/ tests/
+uv run mypy xuanji/
 uv run pytest
 ```
 

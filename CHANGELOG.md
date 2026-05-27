@@ -2,6 +2,90 @@
 
 所有重要的变更都记在这里。版本号遵守 [SemVer](https://semver.org/lang/zh-CN/)。
 
+## [1.0.0] — 2026-05-26
+
+**VS Code 插件正式版 · 现代化工作台 · 全家桶可视化配置 · 议会式群英会**。
+
+1.0 是从 0.5 那个"状态栏 + 三栏仪表盘 + 五件套命令"的最小集，升级成一个独立、
+现代化、简约高级的 React 工作台——所有 0.5 留下的承诺都在这一版兑现：多会话
+聊天、可视化 Skills/MCP/Hooks 配置、随时切模型、Council 议会进度可视化、
+状态栏 token / profile 实时显示、对话内点击跳转源码。零分叉地复用同一个 IPC
+后端，CLI / FastAPI / VS Code 三个入口共享同一个 ServerRuntime。
+
+### Added · 现代化 React 工作台（apps/vscode/）
+
+- **Vite 5 + React 18 + Tailwind 3 + Zustand 4** 全新前端栈，替换 0.5 的纯
+  HTML/JS 三栏仪表盘。打包产物 196KB（gzip 60KB），冷启 < 200ms。
+- **侧边栏视图 + 独立 panel 双形态**：activitybar 一颗北斗图标常驻，命令
+  「玄玑：打开工作台」开独立大窗。状态保留（retainContextWhenHidden）。
+- **VS Code 主题原生融合**：Tailwind tokens 全量映射到 `var(--vscode-*)`，
+  暗色 / 亮色 / 高对比主题一键跟随。
+
+### Added · 多会话聊天（chat 标签）
+
+- 左侧 44 宽 session 列表，「+ 新会话」下拉直接选 profile 启会，双击改名，
+  × 关闭。每个 session 独立消息流，互不影响。
+- **会话内切换 profile**：header 上 profile 按钮点开下拉，选中后 close 旧 →
+  start 新，消息流注入一行「已切换到…」分隔标记。
+- 流式渲染：text_delta / thinking_delta 分块累积；`<details>` 折叠思考；
+  工具调用以 chip 形式插入消息流，状态色（蓝=运行中 / 黄=被拦 / 绿=成功 /
+  红=失败）+ 耗时 / args 折叠。
+- **司辰阁 HITL 卡**：高危操作时在消息流里插一张橙色卡，批准 / 拒绝直送
+  `chat.hitl_response`，无需弹窗打断。
+- 末尾用量栏：`stop=end_turn · in 1.2k · out 460`。
+- **对话内 [文件名](路径#L42-51) 点击跳转**：极轻量 markdown 解析（链接 +
+  ```fence```），命中链接 postMessage 触发 `xuanji.openFile` 命令，主进程
+  resolve 相对路径 + setSelection + revealRange 居中显示。
+
+### Added · 群英会议会面板（council 标签）
+
+- 配题 + 选议员（角色 × profile_override × 侧重提示）+ 设超时 → 一键
+  「召开议会」。最少 2 名议员，可任意增减。角色：稷下生 / 百工匠 / 司鉴 /
+  天枢令。
+- **进度卡实时刷新**：订阅 `ensemble.council_started` /
+  `ensemble.councilor_started|done` / `ensemble.council_judging` /
+  `ensemble.council_done`，每名议员一张状态卡，进行中 → 完成 / 失败着色。
+- **裁决书展示**：议会结束后展开 Verdict——summary、chosen_path、
+  consensus_points、divergence_points、risks、decided_by、耗时 + memory_id。
+- 「展开议员陈词」折叠区显示每位议员的 final_text，便于复盘。
+
+### Added · 全家桶可视化配置
+
+| 标签 | 能做什么 |
+|---|---|
+| **Profiles** | 列出所有 profile + 激活态徽章 / 新增编辑 (anthropic / openai / deepseek / openai-compatible 四档) / 切换激活 / 删除。api_key password 输入；编辑时 name 锁死。|
+| **Skills** | 列出 skills 目录下所有 SKILL.md，点开看 frontmatter + body。错误项分组提示。|
+| **MCP** | 列出已注册 MCP server / 启用 toggle / 编辑 / 删除。stdio 模式管 command/args/cwd/env，http\|sse 模式管 url。|
+| **Hooks** | 四个事件卡（PreToolUse/PostToolUse/UserPromptSubmit/Notification），每张卡支持新增 / 修改 / 移除 hook 条目（matcher / command / timeout / description），整体覆盖式保存。|
+
+所有面板都直接调 IPC RPC，不走对话——按钮点完立即生效。
+
+### Added · 状态栏增强
+
+- 三段联动显示：`✨ 玄玑 · {profile} · {framework}/{inv}/{target} · ↑1.2k ↓460`
+- 工具运行中切换 `$(sync~spin)` 旋转图标
+- 订阅 `chat.message_done` 自动更新最近一轮 token；`chat.tool_run_started`
+  / `chat.turn_done` / `chat.error` 切 busy 态
+- Tooltip 五段式：profile / project 详情 / 最近 token / stop_reason 全展开
+
+### Added · IPC 后端复用
+
+- VS Code 插件通过 stdio JSON-RPC 接 `xuanji ipc`，零分叉复用 0.5 起就锁定
+  的 22 个 RPC 方法 + 0.6 起补的 config/profiles/mcp/hooks/skills CRUD。
+  插件本身零模型依赖，token 消耗都在内核侧计算。
+- `chat.*` 与 `ensemble.*` notification 通过 [server.py](xuanji/ipc/server.py)
+  的 Notifier 推送，[workbench.ts](apps/vscode/src/workbench.ts) 集中订阅 +
+  广播给所有 webview，避免重复连接。
+- `xuanji.openFile` 命令通过白名单 postMessage 桥暴露给 webview，但 webview
+  只能调 `xuanji.*` 前缀命令，不能任意触发 vscode API。
+
+### Notes
+
+- VS Code 插件版本号同步升至 1.0.0，作为对外发布的第一个完整版本。
+- Python 内核版本 1.0.0：质量门 509 单测全绿，ruff / mypy strict 零告警。
+- 后续 1.1+ 计划：Tauri 桌面端跟进（共享 webview 产物）、Web 端独立部署、
+  voice 语音入口适配器。
+
 ## [0.9.3] — 2026-05-26
 
 **全家桶自配置 + 默认 DeepSeek V4 Pro + 代码强化段 + 四个真实会话 bug 修复**。

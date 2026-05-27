@@ -1,0 +1,74 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+html, body, #root {
+    height: 100%;
+    margin: 0;
+    padding: 0;
+}
+
+body {
+    color: var(--vscode-foreground);
+    background: var(--vscode-editor-background);
+    font-family: var(--vscode-font-family);
+    font-size: 13px;
+}
+
+::-webkit-scrollbar {
+    width: 8px;
+    height: 8px;
+}
+::-webkit-scrollbar-thumb {
+    background: var(--vscode-scrollbarSlider-background);
+    border-radius: 4px;
+}
+::-webkit-scrollbar-thumb:hover {
+    background: var(--vscode-scrollbarSlider-hoverBackground);
+}
+
+button {
+    font-family: inherit;
+}
+
+input, textarea, select {
+    font-family: inherit;
+    color: var(--vscode-input-foreground);
+    background: var(--vscode-input-background);
+    border: 1px solid var(--vscode-input-border, transparent);
+    border-radius: 3px;
+    padding: 4px 8px;
+}
+input:focus, textarea:focus, select:focus {
+    outline: 1px solid var(--vscode-focusBorder);
+    outline-offset: -1px;
+}
+
+.kbd {
+    font-family: var(--vscode-editor-font-family);
+    font-size: 11px;
+    padding: 1px 4px;
+    border: 1px solid var(--vscode-panel-border);
+    border-radius: 3px;
+    background: var(--vscode-editorWidget-background);
+}
+
+.markdown a {
+    color: var(--vscode-textLink-foreground);
+    text-decoration: underline;
+}
+.markdown code {
+    background: var(--vscode-editorWidget-background);
+    padding: 0 4px;
+    border-radius: 3px;
+    font-family: var(--vscode-editor-font-family);
+    font-size: 12px;
+}
+.markdown pre {
+    background: var(--vscode-editorWidget-background);
+    padding: 8px;
+    border-radius: 4px;
+    overflow-x: auto;
+    font-family: var(--vscode-editor-font-family);
+    font-size: 12px;
+}

@@ -6,11 +6,13 @@ import * as vscode from "vscode";
 import { resolveBackendOptions, XuanjiBackend } from "./backend";
 import { XuanjiDashboard } from "./dashboard";
 import { XuanjiStatusBar } from "./statusBar";
+import { XuanjiWorkbench } from "./workbench";
 
 interface Deps {
     backend: XuanjiBackend;
     statusBar: XuanjiStatusBar;
     dashboard: XuanjiDashboard;
+    workbench: XuanjiWorkbench;
 }
 
 interface DetectResult {
@@ -61,7 +63,7 @@ interface KnowledgeHit {
 }
 
 export function registerCommands(context: vscode.ExtensionContext, deps: Deps): void {
-    const { backend, statusBar, dashboard } = deps;
+    const { backend, statusBar, dashboard, workbench } = deps;
 
     context.subscriptions.push(
         vscode.commands.registerCommand("xuanji.detectProject", async (uri?: vscode.Uri) => {
@@ -221,10 +223,12 @@ export function registerCommands(context: vscode.ExtensionContext, deps: Deps): 
             try {
                 await backend.restart(resolveBackendOptions());
                 await statusBar.refresh(backend);
+                workbench.bindBackend(backend);
                 void vscode.window.showInformationMessage("玄玑后端已重启。");
             } catch (e) {
                 const msg = e instanceof Error ? e.message : String(e);
                 statusBar.setError(msg);
+                workbench.notifyBackendError(msg);
                 void vscode.window.showErrorMessage(`重启失败：${msg}`);
             }
         }),

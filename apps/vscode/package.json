@@ -1,8 +1,8 @@
 {
   "name": "xuanji-vscode",
   "displayName": "玄玑 · FiveM 智能体",
-  "description": "FiveM 资源开发助手：自动识别 framework / inventory / target，浏览预设草案，搜索知识库与记忆。",
-  "version": "0.5.0",
+  "description": "FiveM 资源开发的现代化助手：多会话聊天 / 议会式群英会 / Profiles · Skills · MCP · Hooks 可视化配置 / 知识库 / 项目识别",
+  "version": "1.0.0",
   "publisher": "xuanji",
   "private": true,
   "engines": {
@@ -14,7 +14,31 @@
     "onStartupFinished"
   ],
   "contributes": {
+    "viewsContainers": {
+      "activitybar": [
+        {
+          "id": "xuanji",
+          "title": "玄玑",
+          "icon": "./media/xuanji.svg"
+        }
+      ]
+    },
+    "views": {
+      "xuanji": [
+        {
+          "type": "webview",
+          "id": "xuanji.sidebar",
+          "name": "玄玑工作台",
+          "icon": "./media/xuanji.svg"
+        }
+      ]
+    },
     "commands": [
+      {
+        "command": "xuanji.openWorkbench",
+        "title": "玄玑：打开工作台",
+        "category": "玄玑"
+      },
       {
         "command": "xuanji.detectProject",
         "title": "玄玑：检测当前项目",
@@ -42,13 +66,19 @@
       },
       {
         "command": "xuanji.openDashboard",
-        "title": "玄玑：打开仪表盘",
+        "title": "玄玑：打开仪表盘（旧版）",
         "category": "玄玑"
       },
       {
         "command": "xuanji.restartBackend",
         "title": "玄玑：重启后端",
         "category": "玄玑"
+      },
+      {
+        "command": "xuanji.openFile",
+        "title": "玄玑：打开文件（内部）",
+        "category": "玄玑",
+        "enablement": "false"
       }
     ],
     "menus": {
@@ -100,13 +130,32 @@
     }
   },
   "scripts": {
-    "build": "tsc -p .",
-    "watch": "tsc -p . -w",
+    "build:extension": "tsc -p .",
+    "build:webview": "vite build",
+    "build": "npm run build:extension && npm run build:webview",
+    "watch:extension": "tsc -p . -w",
+    "watch:webview": "vite build --watch",
+    "dev": "concurrently -n ext,web \"npm run watch:extension\" \"npm run watch:webview\"",
     "vscode:prepublish": "npm run build"
   },
   "devDependencies": {
     "@types/node": "^20.11.0",
+    "@types/react": "^18.3.3",
+    "@types/react-dom": "^18.3.0",
     "@types/vscode": "^1.85.0",
-    "typescript": "^5.4.0"
+    "@vitejs/plugin-react": "^4.3.1",
+    "@vscode/webview-ui-toolkit": "^1.4.0",
+    "autoprefixer": "^10.4.19",
+    "concurrently": "^8.2.2",
+    "postcss": "^8.4.39",
+    "tailwindcss": "^3.4.7",
+    "typescript": "^5.4.0",
+    "vite": "^5.4.0"
+  },
+  "dependencies": {
+    "@tanstack/react-virtual": "^3.10.7",
+    "react": "^18.3.1",
+    "react-dom": "^18.3.1",
+    "zustand": "^4.5.4"
   }
 }

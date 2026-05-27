@@ -200,3 +200,96 @@ def test_init_command_via_cli(runner: CliRunner) -> None:
     assert result.exit_code == 0, result.stdout
     cfg = ConfigStore().load()
     assert cfg.active_profile == "default"
+
+
+# ---------- init 交互式向导（无 flag 走完整 prompt 流） ----------
+
+
+def test_init_wizard_picks_deepseek_by_default(runner: CliRunner) -> None:
+    """完全无 flag → 走交互向导：选 3 (DeepSeek) + profile 名 + API Key。"""
+    result = runner.invoke(
+        app,
+        ["init", "--no-seed", "--skip-test"],
+        input="\n\nsk-test-placeholder\n",
+    )
+    assert result.exit_code == 0, result.stdout
+    assert "DeepSeek" in result.stdout
+    cfg = ConfigStore().load()
+    assert cfg.active_profile == "deepseek"
+    assert isinstance(cfg.profiles["deepseek"], DeepSeekProfile)
+
+
+def test_init_wizard_choice_claude(runner: CliRunner) -> None:
+    """选 1 → Claude (Anthropic) profile，默认名 'claude'。"""
+    result = runner.invoke(
+        app,
+        ["init", "--no-seed", "--skip-test"],
+        input="1\n\nsk-test-placeholder\n",
+    )
+    assert result.exit_code == 0, result.stdout
+    cfg = ConfigStore().load()
+    assert cfg.active_profile == "claude"
+    assert isinstance(cfg.profiles["claude"], AnthropicProfile)
+
+
+def test_init_wizard_choice_custom_base_url(runner: CliRunner) -> None:
+    """选 4 → openai-compatible，需要补 base_url。"""
+    result = runner.invoke(
+        app,
+        ["init", "--no-seed", "--skip-test"],
+        input="4\nmy-oneapi\nhttps://oneapi.example.com/v1\nsk-test-placeholder\n",
+    )
+    assert result.exit_code == 0, result.stdout
+    cfg = ConfigStore().load()
+    assert cfg.active_profile == "my-oneapi"
+    p = cfg.profiles["my-oneapi"]
+    assert isinstance(p, OpenAICompatibleProfile)
+    assert str(p.base_url).startswith("https://oneapi.example.com")
+
+
+def test_init_wizard_rejects_invalid_choice(runner: CliRunner) -> None:
+    """非法序号 → 退码 1。"""
+    result = runner.invoke(
+        app,
+        ["init", "--no-seed", "--skip-test"],
+        input="9\n",
+    )
+    assert result.exit_code == 1
+
+
+def test_init_wizard_rejects_empty_base_url(runner: CliRunner) -> None:
+    """openai-compatible 但 base_url 空 → 退码 1。"""
+    result = runner.invoke(
+        app,
+        ["init", "--no-seed", "--skip-test"],
+        input="4\nmy-oneapi\n\n",
+    )
+    assert result.exit_code == 1
+
+
+def test_init_wizard_rejects_empty_api_key(runner: CliRunner) -> None:
+    """API Key 空 → 退码 1。"""
+    result = runner.invoke(
+        app,
+        ["init", "--no-seed", "--skip-test"],
+        input="3\n\n\n",
+    )
+    assert result.exit_code == 1
+
+
+def test_init_partial_flags_prompt_for_api_key(runner: CliRunner) -> None:
+    """只传 --kind 不传 --api-key → 仅提示 API Key（不走完整向导）。"""
+    result = runner.invoke(
+        app,
+        [
+            "init",
+            "--kind", "anthropic",
+            "--no-seed",
+            "--skip-test",
+        ],
+        input="sk-test-placeholder\n",
+    )
+    assert result.exit_code == 0, result.stdout
+    cfg = ConfigStore().load()
+    assert cfg.active_profile == "default"
+    assert isinstance(cfg.profiles["default"], AnthropicProfile)
