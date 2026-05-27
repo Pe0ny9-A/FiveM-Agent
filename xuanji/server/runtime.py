@@ -101,12 +101,17 @@ class ServerRuntime:
 
         - "lancedb"：嵌入式 LanceDB，落盘到 vector_db_path()
         - "inmemory" / 其他：内存版，重启即丢
-        - "lancedb" 但 import 失败：自动退回 inmemory（不强制阻塞启动）
+        - "lancedb" 但 import 失败 / 目录被兄弟进程独占 → 自动退回 inmemory
+          （多 VS Code 同开时不再因抢不到 manifest 锁而启动失败）
         """
         if backend.lower() == "lancedb":
             try:
-                return LanceDBVectorStore(str(vector_db_path()), dim=dim)
-            except ImportError:
+                store = LanceDBVectorStore(str(vector_db_path()), dim=dim)
+                # 主动 connect 一次：lancedb 在 connect 阶段会建/打开 manifest，
+                # 同台机另一个 VS Code 抢着用就在这里抛 OSError，捕获后降级。
+                store._connect()
+                return store
+            except (ImportError, OSError, RuntimeError):
                 return InMemoryVectorStore(dim=dim)
         return InMemoryVectorStore(dim=dim)
 

@@ -90,7 +90,7 @@ uv run xuanji config use <name>  # 切换 profile
 uv run xuanji chat             # 进入对话
 ```
 
-## 当前进度（截至 1.2.0）
+## 当前进度（截至 1.2.3）
 
 - [x] M0 骨架 + 三家 LLM Provider + 配置系统 + 玄玑人设
 - [x] 天枢台 Conductor 多轮 tool loop + reflux + audit
@@ -117,8 +117,18 @@ uv run xuanji chat             # 进入对话
 - [x] **1.2 FiveM 知识库扩源**：`fivem.qbox@main` / `fivem.esx@1.13` / `fivem.oxmysql@2.x` / `fivem.natives@latest` 四个新命名空间 + 27 Symbol + 8 Chunk
 - [x] **1.2 群英会深度协作**：`DispatchSubagentTool` 加 depth/max_depth/parent_role，sub-agent 可递归召唤同伴；稷下生 / 天枢令 allowed_tools 含 dispatch_subagent
 - [x] **1.2 规则启发式语义压缩**：`score_message()` 三维打分（工具调用 +0.35 / 文本长度 0..0.30 / 后续引用 +0.35）→ ★ 高分原文 / · 中分摘要 / 低分丢弃
+- [x] **1.2.2 知识库 schema 平滑迁移**：0.1 老 FTS5（external content + 触发器，无 chunk_id）自动迁移到 0.7+ 新 schema；VS Code 重启假错抑制 + 自动安装
+- [x] **1.2.3 多 VS Code 共存**：knowledge / memory / tool_factory 三个 SQLite 切 WAL + busy_timeout=30s + synchronous=NORMAL；LanceDB 抢不到 manifest 锁自动降级 InMemory；VS Code 握手超时 8s→30s 给迁移/jieba/兄弟进程留窗口
 - [x] CLI：`info` / `chat` / `serve` / `ipc` / `config` / `knowledge` / `memory` / `skill` / `tool`(含 autofix) / `fivem` / `preset` / `hook`
-- [x] 质量门：ruff/mypy strict/pytest 三件套全绿，**529 单测 / 29 工具 / 107 模块**
+- [x] 质量门：ruff/mypy strict/pytest 三件套全绿，**539 单测 / 29 工具 / 108 模块**
+
+### 1.2.3 关键设计
+
+**SQLite 切 WAL 解决多进程握手 hang**：[xuanji/config/sqlite_conn.py](xuanji/config/sqlite_conn.py) 提供 `tune_for_multiprocess(conn)`，三个 store 的 `_connect()` 都先调一下。WAL 保证多读单写不互斥（DELETE 模式下任何写都整库锁），busy_timeout=30s 给短暂写竞争留缓冲，synchronous=NORMAL 是 WAL 推荐档。降级容错：PRAGMA 失败被吞掉（只读卷 / 老内核可能拒 WAL）。
+
+**LanceDB 锁冲突 → InMemory 兜底**：[xuanji/server/runtime.py](xuanji/server/runtime.py) `_make_vector_store` 在 lancedb 实例化后主动 `_connect()` 一次——同台机第二个 VS Code 启动会在这里抛 OSError（manifest 被兄弟进程独占），捕获后切 InMemoryVectorStore 继续跑，不让单 store 拖垮整个握手。
+
+**VS Code 握手 30s 窗口**：[apps/vscode/src/backend.ts](apps/vscode/src/backend.ts) 的握手超时从 8s 拉到 30s，给"首次启动 + 老 DB schema 迁移 + jieba 词典加载 + 兄弟进程占 SQLite/LanceDB"叠加最坏情况留兜底；正常路径仍秒级返回。
 
 ### 1.2.0 关键设计
 

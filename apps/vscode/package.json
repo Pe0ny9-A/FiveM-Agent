@@ -2,7 +2,7 @@
   "name": "xuanji-vscode",
   "displayName": "玄玑 · FiveM 智能体",
   "description": "FiveM 资源开发的现代化助手：多会话聊天 / 议会式群英会 / Profiles · Skills · MCP · Hooks 可视化配置 / 知识库 / 项目识别",
-  "version": "1.2.2",
+  "version": "1.2.4",
   "publisher": "xuanji",
   "private": true,
   "engines": {
@@ -37,7 +37,11 @@
       {
         "command": "xuanji.openWorkbench",
         "title": "玄玑：打开工作台",
-        "category": "玄玑"
+        "category": "玄玑",
+        "icon": {
+          "light": "./media/xuanji.svg",
+          "dark": "./media/xuanji.svg"
+        }
       },
       {
         "command": "xuanji.detectProject",
@@ -82,6 +86,12 @@
       }
     ],
     "menus": {
+      "editor/title": [
+        {
+          "command": "xuanji.openWorkbench",
+          "group": "navigation@99"
+        }
+      ],
       "explorer/context": [
         {
           "command": "xuanji.detectProject",

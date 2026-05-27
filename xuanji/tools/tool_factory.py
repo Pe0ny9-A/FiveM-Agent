@@ -36,6 +36,7 @@ from pathlib import Path
 from typing import Any
 
 from xuanji.config.profiles import Profile
+from xuanji.config.sqlite_conn import tune_for_multiprocess
 from xuanji.llm.providers.base import Message
 from xuanji.llm.providers.factory import build_provider
 
@@ -105,6 +106,7 @@ class FactoryRegistry:
     @contextmanager
     def _connect(self) -> Iterator[sqlite3.Connection]:
         conn = sqlite3.connect(self._db)
+        tune_for_multiprocess(conn)
         conn.row_factory = sqlite3.Row
         try:
             yield conn

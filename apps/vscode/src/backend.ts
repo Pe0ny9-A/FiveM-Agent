@@ -176,12 +176,13 @@ export class XuanjiBackend implements vscode.Disposable {
             this.exitListener?.(code);
         });
 
-        // 用一次 info 调用确认握手成功
+        // 用一次 info 调用确认握手成功。30 秒超时是给"首次启动 + 老 DB schema 迁移
+        // + jieba 词典加载 + 兄弟进程占着 SQLite/LanceDB"留的兜底窗口；正常情况握手秒级返回。
         try {
             await Promise.race([
                 rpcClient.call("info"),
-                this.wait(8000).then(() => {
-                    throw new Error("后端 8 秒内没响应 info 调用");
+                this.wait(30000).then(() => {
+                    throw new Error("后端 30 秒内没响应 info 调用");
                 }),
             ]);
             this.logChannel.appendLine("[ok] 握手通过，后端就绪");
