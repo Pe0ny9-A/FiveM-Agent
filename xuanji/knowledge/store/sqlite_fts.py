@@ -98,8 +98,61 @@ class SqliteKnowledgeStore:
         self._path.parent.mkdir(parents=True, exist_ok=True)
         with self._connect() as conn:
             conn.executescript(_SCHEMA)
+            self._migrate_chunks_fts(conn)
         self._vector_store: VectorStore | None = None
         self._embedder: Embedder | None = None
+
+    def _migrate_chunks_fts(self, conn: sqlite3.Connection) -> None:
+        """把 0.1 老 schema 的 chunks_fts（external content + 触发器，无 chunk_id 列）
+        平滑升级到 0.7+ 的独立 FTS5 表（含 chunk_id，jieba 预处理文本）。
+
+        Why：CREATE VIRTUAL TABLE IF NOT EXISTS 看到老表就跳过，不会升级；老 schema 上每次
+        INSERT INTO chunks_fts (..., chunk_id) 都会因列不存在而失败。
+        How：建表时自检——若表已存在且不含 chunk_id，DROP 触发器 + 表 → 用新 schema 重建 →
+        从 chunks 表回填（FTS 索引存 jieba 预处理文本，与 upsert_chunks 一致）。
+        """
+        row = conn.execute(
+            "SELECT sql FROM sqlite_master WHERE type='table' AND name='chunks_fts'"
+        ).fetchone()
+        if row is None:
+            return
+        create_sql: str = row["sql"] or ""
+        if "chunk_id" in create_sql:
+            return
+
+        for trig in ("chunks_ai", "chunks_ad", "chunks_au"):
+            conn.execute(f"DROP TRIGGER IF EXISTS {trig}")
+        conn.execute("DROP TABLE chunks_fts")
+        conn.execute(
+            """
+            CREATE VIRTUAL TABLE chunks_fts USING fts5(
+                text,
+                namespace UNINDEXED,
+                section UNINDEXED,
+                source_title UNINDEXED,
+                chunk_id UNINDEXED,
+                tokenize='unicode61 remove_diacritics 2'
+            )
+            """,
+        )
+        rows = conn.execute(
+            "SELECT rowid, id, namespace, source_title, section, text FROM chunks"
+        ).fetchall()
+        for r in rows:
+            conn.execute(
+                """
+                INSERT INTO chunks_fts (rowid, text, namespace, section, source_title, chunk_id)
+                VALUES (?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    r["rowid"],
+                    preprocess_text(r["text"]),
+                    r["namespace"],
+                    r["section"] or "",
+                    r["source_title"],
+                    r["id"],
+                ),
+            )
 
     def attach_vector_index(self, embedder: Embedder, store: VectorStore) -> None:
         """挂载向量索引。挂上后写 chunks 自动 embed + upsert，

@@ -2,7 +2,7 @@
   "name": "xuanji-vscode",
   "displayName": "玄玑 · FiveM 智能体",
   "description": "FiveM 资源开发的现代化助手：多会话聊天 / 议会式群英会 / Profiles · Skills · MCP · Hooks 可视化配置 / 知识库 / 项目识别",
-  "version": "1.2.0",
+  "version": "1.2.2",
   "publisher": "xuanji",
   "private": true,
   "engines": {
@@ -125,6 +125,11 @@
           "type": "boolean",
           "default": false,
           "description": "用 uv run 启动后端（开发期推荐开；用户装包模式下保持关）"
+        },
+        "xuanji.autoInstall": {
+          "type": "boolean",
+          "default": true,
+          "description": "首次启动找不到 xuanji 后端时自动安装（uv tool → pipx → pip --user）。装完会自动重试启动，无需手动操作。"
         }
       }
     }

@@ -7,6 +7,7 @@ import * as fs from "fs";
 import * as path from "path";
 import * as vscode from "vscode";
 
+import { XuanjiInstaller } from "./installer";
 import { JsonRpcClient } from "./rpc";
 
 export interface BackendOptions {
@@ -14,6 +15,7 @@ export interface BackendOptions {
     args: string[];
     cwd: string;
     useUv: boolean;
+    autoInstall: boolean;
 }
 
 export class XuanjiBackend implements vscode.Disposable {
@@ -23,6 +25,8 @@ export class XuanjiBackend implements vscode.Disposable {
     private starting: Promise<void> | null = null;
     private exitListener: ((code: number | null) => void) | null = null;
     private stderrTail: string[] = [];
+    private installAttempted = false;
+    private intentionalShutdown = false;
 
     constructor() {
         this.logChannel = vscode.window.createOutputChannel("玄玑 Backend");
@@ -46,10 +50,43 @@ export class XuanjiBackend implements vscode.Disposable {
         if (this.starting) {
             return this.starting;
         }
-        this.starting = this.start(options).finally(() => {
+        this.starting = this.startWithAutoInstall(options).finally(() => {
             this.starting = null;
         });
         return this.starting;
+    }
+
+    /**
+     * 包一层自动安装：找不到 xuanji 可执行就装一遍重试一次。
+     * 只在 autoInstall=true 且本进程内还没装过的时候触发。
+     */
+    private async startWithAutoInstall(options: BackendOptions): Promise<void> {
+        try {
+            await this.start(options);
+            return;
+        } catch (err) {
+            const reason = err instanceof Error ? err.message : String(err);
+            const looksMissing =
+                /ENOENT|无法启动|not found|command not found|系统找不到指定的(?:文件|路径)/i.test(
+                    reason,
+                );
+            if (
+                !options.autoInstall ||
+                this.installAttempted ||
+                options.useUv ||
+                options.pythonPath ||
+                !looksMissing
+            ) {
+                throw err;
+            }
+            this.installAttempted = true;
+            this.logChannel.appendLine(
+                `[auto-install] 后端缺失（${reason}），尝试自动安装 xuanji-fivem`,
+            );
+            const installer = new XuanjiInstaller(this.logChannel);
+            await installer.install();
+            await this.start(options);
+        }
     }
 
     private async start(options: BackendOptions): Promise<void> {
@@ -73,7 +110,15 @@ export class XuanjiBackend implements vscode.Disposable {
                 command = xuanjiBin;
                 args = ["ipc"];
             } else {
-                command = findVenvPython(options.cwd) || this.pickDefaultPython();
+                // 没装 xuanji，也没 venv python：直接抛"not found"，
+                // 让 startWithAutoInstall 决定要不要触发自动安装
+                const venvPy = findVenvPython(options.cwd);
+                if (!venvPy) {
+                    throw new Error(
+                        "未找到 xuanji 可执行文件（command not found）",
+                    );
+                }
+                command = venvPy;
                 args = options.args;
             }
         }
@@ -123,6 +168,11 @@ export class XuanjiBackend implements vscode.Disposable {
             this.rpcClient?.close();
             this.rpcClient = null;
             this.process = null;
+            // dispose() / restart() 主动杀进程时不该报错
+            if (this.intentionalShutdown) {
+                this.intentionalShutdown = false;
+                return;
+            }
             this.exitListener?.(code);
         });
 
@@ -148,13 +198,6 @@ export class XuanjiBackend implements vscode.Disposable {
         }
     }
 
-    private pickDefaultPython(): string {
-        if (process.platform === "win32") {
-            return "py";
-        }
-        return "python3";
-    }
-
     private wait(ms: number): Promise<void> {
         return new Promise((r) => setTimeout(r, ms));
     }
@@ -174,8 +217,20 @@ export class XuanjiBackend implements vscode.Disposable {
 
     dispose(): void {
         if (this.process) {
+            this.intentionalShutdown = true;
             try {
-                this.process.kill();
+                if (process.platform === "win32" && this.process.pid) {
+                    // Windows 上 process.kill 只杀父进程，xuanji.exe → python.exe
+                    // 子进程会变孤儿。用 taskkill /T /F 杀整棵树。
+                    cp.spawn("taskkill", [
+                        "/PID",
+                        String(this.process.pid),
+                        "/T",
+                        "/F",
+                    ], { windowsHide: true, stdio: "ignore" });
+                } else {
+                    this.process.kill();
+                }
             } catch {
                 /* ignore */
             }
@@ -283,6 +338,7 @@ export function resolveBackendOptions(): BackendOptions {
     const args = cfg.get<string[]>("backendArgs", ["-m", "xuanji.cli", "ipc"]);
     const useUv = cfg.get<boolean>("useUv", false);
     const cfgCwd = cfg.get<string>("workdir", "");
+    const autoInstall = cfg.get<boolean>("autoInstall", true);
 
     let cwd: string;
     if (cfgCwd) {
@@ -299,5 +355,6 @@ export function resolveBackendOptions(): BackendOptions {
         args,
         cwd: path.resolve(cwd),
         useUv,
+        autoInstall,
     };
 }

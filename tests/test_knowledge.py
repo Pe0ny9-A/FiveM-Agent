@@ -224,6 +224,89 @@ def test_search_handles_dangerous_input(store: SqliteKnowledgeStore) -> None:
         store.search(q)
 
 
+def test_migrates_legacy_chunks_fts_schema(tmp_path: Path) -> None:
+    """0.1 老 schema（external content + 触发器，无 chunk_id 列）应自动重建。"""
+    import sqlite3
+
+    db = tmp_path / "legacy.db"
+    conn = sqlite3.connect(db)
+    conn.executescript(
+        """
+        CREATE TABLE sources (
+            namespace TEXT NOT NULL,
+            title     TEXT NOT NULL,
+            url       TEXT,
+            version   TEXT,
+            metadata  TEXT,
+            PRIMARY KEY (namespace, title)
+        );
+        CREATE TABLE chunks (
+            id            TEXT PRIMARY KEY,
+            namespace     TEXT NOT NULL,
+            source_title  TEXT NOT NULL,
+            section       TEXT,
+            text          TEXT NOT NULL,
+            url           TEXT
+        );
+        CREATE VIRTUAL TABLE chunks_fts USING fts5(
+            text,
+            namespace UNINDEXED,
+            section UNINDEXED,
+            source_title UNINDEXED,
+            content=chunks,
+            content_rowid=rowid,
+            tokenize='unicode61 remove_diacritics 2'
+        );
+        CREATE TRIGGER chunks_ai AFTER INSERT ON chunks BEGIN
+            INSERT INTO chunks_fts(rowid, text, namespace, section, source_title)
+            VALUES (new.rowid, new.text, new.namespace, new.section, new.source_title);
+        END;
+        CREATE TRIGGER chunks_ad AFTER DELETE ON chunks BEGIN
+            INSERT INTO chunks_fts(chunks_fts, rowid, text, namespace, section, source_title)
+            VALUES ('delete', old.rowid, old.text, old.namespace, old.section, old.source_title);
+        END;
+        CREATE TRIGGER chunks_au AFTER UPDATE ON chunks BEGIN
+            INSERT INTO chunks_fts(chunks_fts, rowid, text, namespace, section, source_title)
+            VALUES ('delete', old.rowid, old.text, old.namespace, old.section, old.source_title);
+            INSERT INTO chunks_fts(rowid, text, namespace, section, source_title)
+            VALUES (new.rowid, new.text, new.namespace, new.section, new.source_title);
+        END;
+        CREATE TABLE symbols (
+            id TEXT PRIMARY KEY, namespace TEXT NOT NULL, name TEXT NOT NULL,
+            kind TEXT NOT NULL, side TEXT NOT NULL, signature TEXT,
+            summary TEXT, params TEXT, returns TEXT, example TEXT, url TEXT
+        );
+        """,
+    )
+    conn.execute(
+        "INSERT INTO chunks (id, namespace, source_title, section, text) "
+        "VALUES (?, ?, ?, ?, ?)",
+        ("ns@1:legacy#0", "ns@1", "T", "a", "QBCore CreateUseableItem 老数据"),
+    )
+    conn.commit()
+    conn.close()
+
+    legacy = SqliteKnowledgeStore(db)
+
+    # 重建后 schema 必须含 chunk_id 列、原有 chunks 应可被 FTS 命中
+    with sqlite3.connect(db) as inspect:
+        sql = inspect.execute(
+            "SELECT sql FROM sqlite_master WHERE type='table' AND name='chunks_fts'"
+        ).fetchone()[0]
+    assert "chunk_id" in sql
+    assert "content=chunks" not in sql
+
+    hits = legacy.search("CreateUseableItem")
+    assert hits and hits[0].chunk.id == "ns@1:legacy#0"
+
+    # 新 ingest 不再因缺列而失败
+    legacy.upsert_chunks(
+        [Chunk(id="ns@1:fresh#0", namespace="ns@1", source_title="T", text="新数据 helper")],
+    )
+    fresh = legacy.search("helper")
+    assert fresh and fresh[0].chunk.id == "ns@1:fresh#0"
+
+
 # ---------------- 种子数据 ----------------
 
 
